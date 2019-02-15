@@ -1,2 +1,2 @@
-# deepgen-timeseries
+# deep-gen-time
 Deep generative time series models.
