@@ -101,7 +101,8 @@ class MultiVRNN(nn.Module):
         
         # Recurrence h_next = f(x,z,h)
         self.rnn = nn.GRU((self.n_mods + 1) * h_dim, h_dim, n_layers, bias)
-
+        self.h0 = nn.Parameter(torch.zeros(self.n_layers, 1, self.h_dim))
+        
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
@@ -149,7 +150,7 @@ class MultiVRNN(nn.Module):
         out_std = {m: [] for m in self.modalities}
         
         # Initialize hidden state
-        h = torch.zeros(self.n_layers, batch_size, self.h_dim).to(self.device)
+        h = self.h0.repeat(1, batch_size, 1)
             
         for t in range(seq_len):
             # Compute prior for z
@@ -240,7 +241,7 @@ class MultiVRNN(nn.Module):
     def sample(self, seq_len):
         """Generates a sequence of the input data by sampling."""
         out_mean = {m: [] for m in self.modalities}
-        h = torch.zeros(self.n_layers, 1, self.h_dim).to(self.device)
+        h = self.h0.repeat(1, batch_size, 1)
 
         for t in range(seq_len):
             # Compute prior
@@ -353,8 +354,11 @@ class MultiVRNN(nn.Module):
     
 if __name__ == "__main__":
     # Test code by loading dataset and running through model
-    import os, argparse
-    from datasets import load_spirals, seq_collate_dict
+    import os, sys, argparse
+    parent_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    sys.path.insert(0, parent_dir)
+    from datasets.spirals import SpiralsDataset
+    from datasets.multiseq import seq_collate_dict
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dir', type=str, default="../../data",
@@ -364,9 +368,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading data...")
-    dataset = load_spirals(['spiral-x', 'spiral-y'],
-                           args.dir, args.subset, base_rate=2.0,
-                           truncate=True, item_as_dict=True)
+    dataset = SpiralsDataset(['spiral-x', 'spiral-y'],
+                             args.dir, args.subset, base_rate=2.0,
+                             truncate=True, item_as_dict=True)
     print("Building model...")
     model = MultiVRNN(['spiral-x', 'spiral-y'], [1, 1],
                       device=torch.device('cpu'))
@@ -375,6 +379,6 @@ if __name__ == "__main__":
     data, mask, lengths = seq_collate_dict([dataset[0]])
     infer, prior, outputs = model(data, lengths)
     out_mean, out_std = outputs
-    print("Predicted ratings:")
-    for o, o_std in zip(out_mean['ratings'], out_std['ratings']):
-        print("{:+0.3f} +- {:0.3f}".format(o.item(), o_std.item()))
+    print("Predicted:")
+    for x, y in zip(out_mean['spiral-x'], out_mean['spiral-y']):
+        print("{:+0.3f}, {:+0.3f}".format(x.item(), y.item()))

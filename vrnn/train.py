@@ -17,7 +17,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from datasets import seq_collate_dict, load_spirals
+parent_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, parent_dir)
+
+from datasets.spirals import SpiralsDataset
+from datasets.multiseq import seq_collate_dict
+
 from models import MultiVRNN
 
 def eval_ccc(y_true, y_pred):
@@ -88,6 +93,7 @@ def evaluate(dataset, model, args, fig_path=None):
     predictions = {m: [] for m in args.modalities}
     data_num = 0
     kld_loss, rec_loss = [], []
+    drop_frac, keep_frac = 0.5, 0.75
     for data in dataset:
         # Collate data into batch dictionary of size 1
         data, mask, lengths = seq_collate_dict([data])
@@ -100,10 +106,10 @@ def evaluate(dataset, model, args, fig_path=None):
         for m in inputs.keys():
             # Randomly remove a fraction of observations
             drop_idx = np.random.choice(max(lengths),
-                                        int(0.5 * max(lengths)), False)
+                                        int(drop_frac * max(lengths)), False)
             inputs[m][drop_idx,:,:] = float('nan')
             # Remove final fraction of observations to test extrapolation
-            inputs[m][int(0.75 * max(lengths)):,:,:] = float('nan')
+            inputs[m][int(keep_frac * max(lengths)):,:,:] = float('nan')
         # Run forward pass using all modalities
         infer, prior, outputs = model(inputs, lengths)
         # Compute and store KLD and reconstruction losses
@@ -171,12 +177,12 @@ def load_checkpoint(path, device):
 
 def load_data(modalities, args):
     print("Loading data...")
-    train_data = load_spirals(modalities, args.data_dir, args.train_subdir,
-                              base_rate=args.base_rate,
-                              truncate=True, item_as_dict=True)
-    test_data = load_spirals(modalities, args.data_dir, args.test_subdir,
-                             base_rate=args.base_rate,
-                             truncate=True, item_as_dict=True)
+    train_data = SpiralsDataset(modalities, args.data_dir, args.train_subdir,
+                                base_rate=args.base_rate,
+                                truncate=True, item_as_dict=True)
+    test_data = SpiralsDataset(modalities, args.data_dir, args.test_subdir,
+                               base_rate=args.base_rate,
+                               truncate=True, item_as_dict=True)
     print("Done.")
     if len(args.normalize) > 0:
         print("Normalizing ", args.normalize, "...")
@@ -213,8 +219,7 @@ def main(args):
         args.modalities = ['spiral-x', 'spiral-y']
 
     # Load data for specified modalities
-    train_data, test_data = load_data(args.modalities, args.data_dir,
-                                      args.normalize)
+    train_data, test_data = load_data(args.modalities, args)
     
     # Construct model
     dims = {'spiral-x': 1, 'spiral-y': 1}
@@ -253,7 +258,7 @@ def main(args):
             print("--Training--")
             pred, _  = evaluate(train_data, model, args,
                                 os.path.join(args.save_dir, "train.png"))
-            save_predictions(train_data, pred, pred_train_dir)
+            # save_predictions(train_data, pred, pred_train_dir)
             print("--Testing--")
             pred, _  = evaluate(test_data, model, args,
                                 os.path.join(args.save_dir, "test.png"))

@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os, re, copy, itertools
+
 import pandas as pd
 import numpy as np
 import torch
@@ -269,70 +270,3 @@ def seq_collate_dict(data, time_first=True):
         mask = mask.permute(1, 0, 2)
     return batch, mask, lengths
 
-def load_spirals(modalities, base_dir, subset,
-                 base_rate=None, truncate=False, item_as_dict=False):
-    """Helper function for loading spirals dataset"""
-    dirs = {
-        'spiral-x': os.path.join(base_dir, subset),
-        'spiral-y': os.path.join(base_dir, subset),
-    }
-    regex = {
-        'spiral-x': "spiral_(\d+)\.csv",
-        'spiral-y': "spiral_(\d+)\.csv"
-    }
-    rates = {'spiral-x': 1, 'spiral-y': 1}
-    preprocess = {
-        # Keep only x coordinates
-        'spiral-x': lambda df : df.loc[:,['x']],
-        # Keep only y coordinates
-        'spiral-y': lambda df : df.loc[:,['y']]
-    }
-    return MultiseqDataset(modalities, [dirs[m] for m in modalities],
-                           [regex[m] for m in modalities],
-                           [preprocess[m] for m in modalities],
-                           [rates[m] for m in modalities],
-                           base_rate, truncate, item_as_dict)
-
-if __name__ == "__main__":
-    # Test code by loading dataset
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', type=str, default="../datasets/spirals",
-                        help='data directory')
-    parser.add_argument('--subset', type=str, default="train",
-                        help='whether to load train/test data')
-    parser.add_argument('--modalities', type=str, default=None, nargs='+',
-                        help='input modalities (default: all')
-    parser.add_argument('--stats', action='store_true', default=False,
-                        help='whether to compute and print statistics')
-    args = parser.parse_args()
-
-    print("Loading data...")
-    if args.modalities is None:
-        modalities = ['spiral-x', 'spiral-y']
-    else:
-        modalities = args.modalities
-    dataset = load_spirals(modalities, args.dir, args.subset)
-    print("Testing batch collation...")
-    data = seq_collate([dataset[i] for i in range(min(10, len(dataset)))])
-    print("Batch shapes:")
-    for d in data[:-2]:
-        print(d.shape)
-    print("Sequence lengths: ", data[-1])
-    print("Checking through data for mismatched sequence lengths...")
-    for i, data in enumerate(dataset):
-        print("Example: ", dataset.seq_ids[i])
-        x, y = data
-        print(x.shape, y.shape)
-        if len(x) != len(y):
-            print("WARNING: Mismatched sequence lengths.")
-    if args.stats:
-        print("Statistics:")
-        m_mean, m_std = dataset.mean_and_std()
-        m_max, m_min = dataset.max_and_min()
-        for m in modalities:
-            print("--", m, "--")
-            print("Mean:", m_mean[m])
-            print("Std:", m_std[m])
-            print("Max:", m_max[m])
-            print("Min:", m_min[m])
