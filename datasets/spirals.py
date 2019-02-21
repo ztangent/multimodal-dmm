@@ -9,7 +9,10 @@ import numpy as np
 import numpy.random as r
 import pandas as pd
 
-from .multiseq import MultiseqDataset, seq_collate
+if __name__ == '__main__':
+    from multiseq import MultiseqDataset, seq_collate
+else:
+    from .multiseq import MultiseqDataset, seq_collate
 
 class SpiralsDataset(MultiseqDataset):
     """Dataset of noisy spirals."""
@@ -65,6 +68,7 @@ def gen_dataset(n_examples=1000, n_train=600,
     indices = list(range(n_examples))
     r.shuffle(indices)
     # Generate spirals
+    spirals = []
     for i in range(n_examples):
         # First half are CW spirals, second half are CCW spirals
         direction = 1 if (i >= n_examples/2) else -1
@@ -82,13 +86,16 @@ def gen_dataset(n_examples=1000, n_train=600,
         # Add Gaussian noise
         noisy_x = x + 0.1 * r.randn(timesteps)
         noisy_y = y + 0.1 * r.randn(timesteps)
-        # Save data with random index
         spiral = np.stack([x, y, noisy_x, noisy_y], axis=1)
+        spirals.append(spiral)
+    for i in range(n_examples):
+        # Shuffle data into train and test sets
         subset = 'train' if i < n_train else 'test'
         fn = os.path.join(data_dir, subset,
                           'spiral_{:03d}.csv'.format(indices[i]))
-        pd.DataFrame(spiral, columns=['x', 'y', 'noisy_x', 'noisy_y']).\
-            to_csv(fn, index=False)
+        pd.DataFrame(spirals[indices[i]],
+                     columns=['x', 'y', 'noisy_x', 'noisy_y']).\
+                     to_csv(fn, index=False)
 
 def test_dataset(data_dir='./spirals', subset='train', stats=False):
     print("Loading data...")
