@@ -269,42 +269,24 @@ def seq_collate_dict(data, time_first=True):
         mask = mask.permute(1, 0, 2)
     return batch, mask, lengths
 
-def load_dataset(modalities, base_dir, subset,
+def load_spirals(modalities, base_dir, subset,
                  base_rate=None, truncate=False, item_as_dict=False):
-    """Helper function specifically for loading SEND dataset."""
+    """Helper function for loading spirals dataset"""
     dirs = {
-        'acoustic': os.path.join(base_dir, 'features', subset, 'acoustic'),
-        'linguistic': os.path.join(base_dir, 'features', subset, 'linguistic'),
-        'emotient': os.path.join(base_dir, 'features', subset, 'emotient'),
-        'ratings' : os.path.join(base_dir, 'ratings', subset, 'observer_avg')
+        'spiral-x': os.path.join(base_dir, subset),
+        'spiral-y': os.path.join(base_dir, subset),
     }
     regex = {
-        'acoustic': "ID(\d+)_vid(\d+)_.*\.csv",
-        'linguistic': "ID(\d+)_vid(\d+)_.*\.tsv",
-        'emotient': "ID(\d+)_vid(\d+)_.*\.txt",
-        'ratings' : "results_(\d+)_(\d+)\.csv" #observer_avg
+        'spiral-x': "spiral_(\d+)\.csv",
+        'spiral-y': "spiral_(\d+)\.csv"
     }
-    rates = {'acoustic': 2, 'linguistic': 0.2, 'emotient': 30, 'ratings': 2}
+    rates = {'spiral-x': 1, 'spiral-y': 1}
     preprocess = {
-        # Drop timestamps and frame indices
-        'acoustic': lambda df : df.drop(columns=['frameIndex', ' frameTime']),
-        # Use only GloVe vectors
-        'linguistic': lambda df : df.loc[:,'glove0':'glove299'],
-        # Fill in missing emotient data with NaNs, use only action units
-        'emotient': lambda df : (df.set_index('Frametime')\
-                                 .reindex(
-                                     np.arange(0.0333667,
-                                               max(df['Frametime']),
-                                               0.0333667),
-                                     axis='index', method='nearest',
-                                     tolerance=1e-3, fill_value=float('nan'))\
-                                 .reset_index().loc[:,'AU1':'AU43']),
-        # Rescale from [0, 100] to [-1, 1]
-        'ratings' : lambda df : df.drop(columns=['time']) / 50 - 1
-        # 'ratings' : lambda df : df.drop(columns=['time']) * 2 - 1 #target
+        # Keep only x coordinates
+        'spiral-x': lambda df : df.loc[:,['x']],
+        # Keep only y coordinates
+        'spiral-y': lambda df : df.loc[:,['y']]
     }
-    if 'ratings' not in modalities:
-        modalities = modalities + ['ratings']
     return MultiseqDataset(modalities, [dirs[m] for m in modalities],
                            [regex[m] for m in modalities],
                            [preprocess[m] for m in modalities],
@@ -315,10 +297,10 @@ if __name__ == "__main__":
     # Test code by loading dataset
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', type=str, default="../../data",
+    parser.add_argument('--dir', type=str, default="../datasets/spirals",
                         help='data directory')
-    parser.add_argument('--subset', type=str, default="Train",
-                        help='whether to load Train/Valid/Test data')
+    parser.add_argument('--subset', type=str, default="train",
+                        help='whether to load train/test data')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
     parser.add_argument('--stats', action='store_true', default=False,
@@ -327,10 +309,10 @@ if __name__ == "__main__":
 
     print("Loading data...")
     if args.modalities is None:
-        modalities = ['acoustic', 'linguistic', 'emotient', 'ratings']
+        modalities = ['spiral-x', 'spiral-y']
     else:
         modalities = args.modalities
-    dataset = load_dataset(modalities, args.dir, args.subset, base_rate=2.0)
+    dataset = load_spirals(modalities, args.dir, args.subset)
     print("Testing batch collation...")
     data = seq_collate([dataset[i] for i in range(min(10, len(dataset)))])
     print("Batch shapes:")
@@ -339,14 +321,11 @@ if __name__ == "__main__":
     print("Sequence lengths: ", data[-1])
     print("Checking through data for mismatched sequence lengths...")
     for i, data in enumerate(dataset):
-        print("Subject, Video: ", dataset.seq_ids[i])
-        acoustic, linguistic, emotient, ratings = data
-        print(acoustic.shape, linguistic.shape, emotient.shape, ratings.shape)
-        if not (len(acoustic) == len(ratings) and
-                len(linguistic) == len(ratings) and 
-                len(emotient) == len(ratings)):
+        print("Example: ", dataset.seq_ids[i])
+        x, y = data
+        print(x.shape, y.shape)
+        if len(x) != len(y):
             print("WARNING: Mismatched sequence lengths.")
-
     if args.stats:
         print("Statistics:")
         m_mean, m_std = dataset.mean_and_std()

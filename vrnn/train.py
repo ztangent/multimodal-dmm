@@ -14,11 +14,10 @@ import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from datasets import seq_collate_dict, load_dataset
+from datasets import seq_collate_dict, load_spirals
 from models import MultiVRNN
 
 def eval_ccc(y_true, y_pred):
@@ -42,43 +41,30 @@ def train(loader, model, optimizer, epoch, args):
     loss = 0.0
     data_num = 0
     log_freq = len(loader) // args.log_freq
-    # Select batches that should be supervised
     rec_mults = dict(args.rec_mults)
     for batch_num, (data, mask, lengths) in enumerate(loader):
-        # Anneal KLD and supervised loss multipliers
+        # Anneal KLD loss multipliers
         batch_tot = batch_num + epoch*len(loader)
         kld_mult =\
             anneal(0.0, args.kld_mult, batch_tot, args.kld_anneal*len(loader))
-        sup_mult =\
-            anneal(0.0, args.sup_mult, batch_tot, args.sup_anneal*len(loader))
-        # Add supervised loss multiplier to reconstruction multiplier dict
-        rec_mults['ratings'] = sup_mult
         # Send to device
         mask = mask.to(args.device)
         for m in data.keys():
             data[m] = data[m].to(args.device)
-        # Select random samples within batch to be unsupervised
-        batch_size = len(lengths)
-        unsup_idx = np.random.choice(batch_size, replace=False,
-                                     size=int(args.sup_ratio * batch_size))
-        inputs = dict(data)
-        inputs['ratings'] = torch.tensor(data['ratings'])
-        inputs['ratings'][:,unsup_idx,:] = float('nan')
-        # Run forward pass with all input modalities
-        infer, prior, outputs = model(inputs, lengths)
-        # Compute ELBO loss for all input modalities
-        batch_loss = model.loss(data, infer, prior, outputs, mask,
-                                kld_mult, rec_mults)
-        # Compute ELBO loss for individual input modalities
+        # Compute ELBO loss for individual modalities
+        batch_loss = 0
+        for m in args.modalities:
+            # Run forward pass with modality m
+            infer, prior, outputs = model({m: data[m]}, lengths)
+            # Compute ELBO loss for modality m
+            batch_loss += model.loss({m: data[m]}, infer, prior, outputs, mask,
+                                     kld_mult, rec_mults)
         if len(args.modalities) > 1:
-            for m in args.modalities:
-                # Provide only modality m + ratings (which maybe be missing)
-                m_inputs = {m: inputs[m], 'ratings': inputs['ratings']}
-                infer, prior, outputs = model(m_inputs, lengths)
-                # Compute ELBO loss for modality m and ratings
-                m_inputs['ratings'] = data['ratings']
-                batch_loss += model.loss(m_inputs, infer, prior, outputs, mask,
-                                         kld_mult, rec_mults)
+            # Run forward pass with all modalities
+            infer, prior, outputs = model(data, lengths)
+            # Compute ELBO loss for all modalities
+            batch_loss += model.loss(data, infer, prior, outputs, mask,
+                                     kld_mult, rec_mults)
         loss += batch_loss
         # Average over number of datapoints before stepping
         batch_loss /= sum(lengths)
@@ -93,101 +79,82 @@ def train(loader, model, optimizer, epoch, args):
     # Average losses and print
     loss /= data_num
     print('---')
-    print('Epoch: {}\tLoss: {:10.1f}\tB_KLD: {:0.3f}\tB_Sup: {:5.2f}'.\
-          format(epoch, loss, kld_mult, sup_mult))
+    print('Epoch: {}\tLoss: {:10.1f}\tKLD-Mult: {:0.3f}'.\
+          format(epoch, loss, kld_mult))
     return loss
 
 def evaluate(dataset, model, args, fig_path=None):
     model.eval()
-    predictions = []
+    predictions = {m: [] for m in args.modalities}
     data_num = 0
-    kld_loss, rec_loss, sup_loss = 0.0, 0.0, 0.0
-    corr, ccc = [], []
-    for data, orig in zip(dataset, dataset.orig['ratings']):
+    kld_loss, rec_loss = [], []
+    for data in dataset:
         # Collate data into batch dictionary of size 1
         data, mask, lengths = seq_collate_dict([data])
         # Send to device
         mask = mask.to(args.device)
         for m in data.keys():
             data[m] = data[m].to(args.device)
-        # Separate target modality from input modalities
-        target = {'ratings': data['ratings']}
-        inputs = dict(data)
-        del inputs['ratings']
-        # Run forward pass using input modalities
+        # Mask out some data to test for robustness
+        inputs = {m: torch.tensor(data[m]) for m in data.keys()}
+        for m in inputs.keys():
+            # Randomly remove a fraction of observations
+            drop_idx = np.random.choice(max(lengths),
+                                        int(0.5 * max(lengths)), False)
+            inputs[m][drop_idx,:,:] = float('nan')
+            # Remove final fraction of observations to test extrapolation
+            inputs[m][int(0.75 * max(lengths)):,:,:] = float('nan')
+        # Run forward pass using all modalities
         infer, prior, outputs = model(inputs, lengths)
-        # Compute and store KLD, reconstruction and supervised losses
-        kld_loss += model.kld_loss(infer, prior, mask)
-        rec_loss += model.rec_loss(inputs, outputs, mask, args.rec_mults)
-        sup_loss += model.rec_loss(target, outputs, mask)
+        # Compute and store KLD and reconstruction losses
+        kld_loss.append(model.kld_loss(infer, prior, mask))
+        rec_loss.append(model.rec_loss(data, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
-        # Resize predictions to match original length
+        # Store predictions
         out_mean, _ = outputs
-        pred = out_mean['ratings'][:lengths[0], 0].view(-1).cpu().numpy()
-        pred = np.repeat(pred, int(dataset.ratios['ratings']))[:len(orig)]
-        if len(pred) < len(orig):
-            pred = np.concatenate((pred, pred[len(pred)-len(orig):]))
-        predictions.append(pred)
-        # Compute correlation and CCC of predictions against ratings
-        corr.append(pearsonr(orig.reshape(-1), pred)[0])
-        ccc.append(eval_ccc(orig.reshape(-1), pred))
-    # Plot predictions against ratings
+        for m in out_mean.keys():
+            predictions[m].append(out_mean[m].view(-1).cpu().numpy())
+    # Plot predictions against truth
     if args.visualize:
-        plot_predictions(dataset, predictions, ccc, args, fig_path)
+        plot_predictions(dataset, predictions, rec_loss, args, fig_path)
     # Average losses and print
-    kld_loss /= data_num
-    rec_loss /= data_num
-    sup_loss /= data_num
-    losses = kld_loss, rec_loss, sup_loss
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\tSup: {:7.1f}'.\
-          format(*losses))
-    # Average statistics and print
-    stats = {'corr': np.mean(corr), 'corr_std': np.std(corr),
-             'ccc': np.mean(ccc), 'ccc_std': np.std(ccc)}
-    print('Corr: {:0.3f}\tCCC: {:0.3f}'.format(stats['corr'], stats['ccc']))
-    return predictions, losses, stats
+    kld_loss = sum(kld_loss) / data_num
+    rec_loss = sum(rec_loss) / data_num
+    losses = kld_loss, rec_loss
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.format(*losses))
+    return predictions, losses
 
 def plot_predictions(dataset, predictions, metric, args, fig_path=None):
-    """Plots predictions against ratings for representative fits."""
+    """Plots predictions against truth for representative fits."""
     # Select top 4 and bottom 4
-    sel_idx = np.concatenate((np.argsort(metric)[-4:][::-1],
-                              np.argsort(metric)[:4]))
+    sel_idx = np.concatenate((np.argsort(metric)[:4],
+                              np.argsort(metric)[-4:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
-    sel_true = [dataset.orig['ratings'][i] for i in sel_idx]
-    sel_pred = [predictions[i] for i in sel_idx]
+    sel_true = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
+                for i in sel_idx]
+    sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
+                for i in sel_idx]
     for i, (true, pred, m) in enumerate(zip(sel_true, sel_pred, sel_metric)):
         j, i = (i // 4), (i % 4)
         args.axes[i,j].cla()
-        args.axes[i,j].plot(true, 'b-')
-        args.axes[i,j].plot(pred, 'c-')
-        args.axes[i,j].set_xlim(0, len(true))
-        args.axes[i,j].set_ylim(-1, 1)
-        args.axes[i,j].set_title("Fit = {:0.3f}".format(m))
+        args.axes[i,j].plot(true[0], true[1], 'b-')
+        args.axes[i,j].plot(pred[0], pred[1], 'c-')
+        args.axes[i,j].set_xlim(-5, 5)
+        args.axes[i,j].set_ylim(-5, 5)
+        args.axes[i,j].set_title("Metric = {:0.3f}".format(m))
     plt.tight_layout()
     plt.draw()
     if fig_path is not None:
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
 
-def save_predictions(dataset, predictions, path):
-    for p, seq_id in zip(predictions, dataset.seq_ids):
-        df = pd.DataFrame(p, columns=['rating'])
-        fname = "target_{}_{}_normal.csv".format(*seq_id)
-        df.to_csv(os.path.join(path, fname), index=False)
-
-def save_params(args, model, train_stats, test_stats):
+def save_params(args, model):
     fname = 'param_hist.tsv'
     df = pd.DataFrame([vars(args)], columns=vars(args).keys())
     df = df[['save_dir', 'modalities', 'normalize', 'batch_size', 'split',
-             'epochs', 'lr', 'kld_mult', 'sup_mult', 'rec_mults',
-             'kld_anneal', 'sup_anneal', 'sup_ratio', 'base_rate']]
-    for k in ['ccc_std', 'ccc']:
-        v = train_stats.get(k, float('nan'))
-        df.insert(0, 'train_' + k, v)
-    for k in ['ccc_std', 'ccc']:
-        v = test_stats.get(k, float('nan'))
-        df.insert(0, 'test_' + k, v)
+             'epochs', 'lr', 'kld_mult', 'rec_mults',
+             'kld_anneal', 'base_rate']]
     df.insert(0, 'model', [model.__class__.__name__])
     df['h_dim'] = model.h_dim
     df['z_dim'] = model.z_dim
@@ -202,21 +169,21 @@ def load_checkpoint(path, device):
     checkpoint = torch.load(path, map_location=device)
     return checkpoint
 
-def load_data(modalities, data_dir, normalize=[]):
+def load_data(modalities, args):
     print("Loading data...")
-    train_data = load_dataset(modalities, data_dir, 'Train',
+    train_data = load_spirals(modalities, args.data_dir, args.train_subdir,
                               base_rate=args.base_rate,
                               truncate=True, item_as_dict=True)
-    test_data = load_dataset(modalities, data_dir, 'Valid',
+    test_data = load_spirals(modalities, args.data_dir, args.test_subdir,
                              base_rate=args.base_rate,
                              truncate=True, item_as_dict=True)
     print("Done.")
-    if len(normalize) > 0:
-        print("Normalizing ", normalize, "...")
+    if len(args.normalize) > 0:
+        print("Normalizing ", args.normalize, "...")
         # Normalize test data using training data as reference
-        test_data.normalize_(modalities=normalize, ref_data=train_data)
+        test_data.normalize_(modalities=args.normalize, ref_data=train_data)
         # Normailze training data in-place
-        train_data.normalize_(modalities=normalize)
+        train_data.normalize_(modalities=args.normalize)
     return train_data, test_data
 
 def main(args):
@@ -242,18 +209,16 @@ def main(args):
         # Use loaded modalities
         args.modalities = checkpoint['modalities']
     elif args.modalities is None:
-        # Default to acoustic if unspecified
-        args.modalities = ['acoustic', 'linguistic', 'emotient']
+        # Default to all if unspecified
+        args.modalities = ['spiral-x', 'spiral-y']
 
     # Load data for specified modalities
     train_data, test_data = load_data(args.modalities, args.data_dir,
                                       args.normalize)
     
-    # Construct multimodal LSTM model
-    dims = {'acoustic': 988, 'linguistic': 300,
-            'emotient': 20, 'ratings': 1}
-    model = MultiVRNN(args.modalities + ['ratings'],
-                      dims=(dims[m] for m in (args.modalities + ['ratings'])),
+    # Construct model
+    dims = {'spiral-x': 1, 'spiral-y': 1}
+    model = MultiVRNN(args.modalities, dims=(dims[m] for m in args.modalities),
                       device=args.device)
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'])
@@ -286,16 +251,16 @@ def main(args):
         # Evaluate on both training and test set
         with torch.no_grad():
             print("--Training--")
-            pred, _, train_stats = evaluate(train_data, model, args,
-                os.path.join(args.save_dir, "train.png"))
+            pred, _  = evaluate(train_data, model, args,
+                                os.path.join(args.save_dir, "train.png"))
             save_predictions(train_data, pred, pred_train_dir)
             print("--Testing--")
-            pred, _, test_stats = evaluate(test_data, model, args,
-                os.path.join(args.save_dir, "test.png"))
-            save_predictions(test_data, pred, pred_test_dir)
-        # Save command line flags, model params and CCC value
-        save_params(args, model, train_stats, test_stats)
-        return train_stats['ccc'], test_stats['ccc']
+            pred, _  = evaluate(test_data, model, args,
+                                os.path.join(args.save_dir, "test.png"))
+            # save_predictions(test_data, pred, pred_test_dir)
+        # Save command line flags, model params
+        save_params(args, model)
+        return
 
     # Split training data into chunks
     train_data = train_data.split(args.split)
@@ -305,18 +270,15 @@ def main(args):
                               pin_memory=True)
    
     # Train and save best model
-    best_ccc = -1
-    best_stats = dict()
+    best_loss = float('inf')
     for epoch in range(1, args.epochs + 1):
         print('---')
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                pred, loss, stats =\
-                    evaluate(test_data, model, args)
-            if stats['ccc'] > best_ccc:
-                best_ccc = stats['ccc']
-                best_stats = stats
+                pred, (kld_loss, rec_loss) = evaluate(test_data, model, args)
+            if rec_loss < best_loss:
+                best_loss = rec_loss
                 path = os.path.join(args.save_dir, "best.pth") 
                 save_checkpoint(args.modalities, model, path)
         # Save checkpoints
@@ -329,36 +291,30 @@ def main(args):
     save_checkpoint(args.modalities, model, path)
 
     # Save command line flags, model params and performance statistics
-    save_params(args, model, dict(), best_stats)
+    save_params(args, model)
     
-    return best_ccc
+    return
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
-    parser.add_argument('--batch_size', type=int, default=25, metavar='N',
-                        help='input batch size for training (default: 25)')
+    parser.add_argument('--batch_size', type=int, default=100, metavar='N',
+                        help='input batch size for training (default: 100)')
     parser.add_argument('--split', type=int, default=1, metavar='N',
                         help='sections to split each video into (default: 1)')
     parser.add_argument('--epochs', type=int, default=1000, metavar='N',
                         help='number of epochs to train (default: 1000)')
-    parser.add_argument('--lr', type=float, default=1e-5, metavar='LR',
-                        help='learning rate (default: 1e-5)')
-    parser.add_argument('--sup_ratio', type=float, default=0.5, metavar='F',
-                        help='teacher-forcing ratio (default: 0.5)')
-    parser.add_argument('--base_rate', type=float, default=2.0, metavar='N',
-                        help='sampling rate to resample to (default: 2.0)')
+    parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
+                        help='learning rate (default: 1e-4)')
+    parser.add_argument('--base_rate', type=float, default=1.0, metavar='N',
+                        help='sampling rate to resample to (default: 1.0)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
                         help='max kld loss multiplier (default: 1.0)')
-    parser.add_argument('--sup_mult', type=float, default=10, metavar='F',
-                        help='max supervised loss multiplier (default: 10)')
     parser.add_argument('--rec_mults', type=float, default=None, nargs='+',
                         help='reconstruction loss multiplier (default: 1/dims')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
-    parser.add_argument('--sup_anneal', type=int, default=100, metavar='N',
-                        help='epochs to increase sup_mult over (default: 100)')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
@@ -375,9 +331,13 @@ if __name__ == "__main__":
                         help='evaluate without training (default: false)')
     parser.add_argument('--load', type=str, default=None,
                         help='path to trained model (either resume or test)')
-    parser.add_argument('--data_dir', type=str, default="../../data",
+    parser.add_argument('--data_dir', type=str, default="../datasets/spirals",
                         help='path to data base directory')
-    parser.add_argument('--save_dir', type=str, default="./lstm_save",
+    parser.add_argument('--save_dir', type=str, default="./vrnn_save",
                         help='path to save models and predictions')
+    parser.add_argument('--train_subdir', type=str, default='train',
+                        help='training data subdirectory')
+    parser.add_argument('--test_subdir', type=str, default='test',
+                        help='testing data subdirectory')
     args = parser.parse_args()
     main(args)

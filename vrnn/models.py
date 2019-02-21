@@ -354,21 +354,21 @@ class MultiVRNN(nn.Module):
 if __name__ == "__main__":
     # Test code by loading dataset and running through model
     import os, argparse
-    from datasets import load_dataset, seq_collate_dict
+    from datasets import load_spirals, seq_collate_dict
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dir', type=str, default="../../data",
                         help='data directory')
-    parser.add_argument('--subset', type=str, default="Train",
-                        help='whether to load Train/Valid/Test data')
+    parser.add_argument('--subset', type=str, default="train",
+                        help='whether to load train/test data')
     args = parser.parse_args()
 
     print("Loading data...")
-    dataset = load_dataset(['acoustic', 'ratings'],
+    dataset = load_spirals(['spiral-x', 'spiral-y'],
                            args.dir, args.subset, base_rate=2.0,
                            truncate=True, item_as_dict=True)
     print("Building model...")
-    model = MultiVRNN(['acoustic', 'ratings'], [988, 1],
+    model = MultiVRNN(['spiral-x', 'spiral-y'], [1, 1],
                       device=torch.device('cpu'))
     model.eval()
     print("Passing a sample through the model...")
