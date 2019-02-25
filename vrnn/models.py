@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 
 class MultiVRNN(nn.Module):
-    def __init__(self, modalities, dims, h_dim=8, z_dim=8,
+    def __init__(self, modalities, dims, h_dim=16, z_dim=16,
                  n_layers=1, bias=True, device=torch.device('cuda:0')):
         """
         Construct multimodal variational recurrent neural network.
