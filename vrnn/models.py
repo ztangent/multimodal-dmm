@@ -20,8 +20,8 @@ import torch
 import torch.nn as nn
 
 class MultiVRNN(nn.Module):
-    def __init__(self, modalities, dims, h_dim=256, z_dim=256,
-                 n_layers=1, bias=False, device=torch.device('cuda:0')):
+    def __init__(self, modalities, dims, h_dim=8, z_dim=8,
+                 n_layers=1, bias=True, device=torch.device('cuda:0')):
         """
         Construct multimodal variational recurrent neural network.
 
@@ -53,8 +53,6 @@ class MultiVRNN(nn.Module):
         for m in self.modalities:
             self.phi[m] = nn.Sequential(
                 nn.Linear(self.dims[m], h_dim),
-                nn.ReLU(),
-                nn.Linear(h_dim, h_dim),
                 nn.ReLU())
         self.phi_z = nn.Sequential(
             nn.Linear(z_dim, h_dim),
@@ -67,8 +65,6 @@ class MultiVRNN(nn.Module):
         for m in self.modalities:
             self.enc[m] = nn.Sequential(
                 nn.Linear(h_dim + h_dim, h_dim),
-                nn.ReLU(),
-                nn.Linear(h_dim, h_dim),
                 nn.ReLU())
             self.enc_mean[m] = nn.Linear(h_dim, z_dim)
             self.enc_std[m] = nn.Sequential(
@@ -91,8 +87,6 @@ class MultiVRNN(nn.Module):
         for m in self.modalities:
             self.dec[m] = nn.Sequential(
                 nn.Linear(h_dim + h_dim, h_dim),
-                nn.ReLU(),
-                nn.Linear(h_dim, h_dim),
                 nn.ReLU())
             self.dec_mean[m] = nn.Linear(h_dim, self.dims[m])
             self.dec_std[m] = nn.Sequential(

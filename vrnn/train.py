@@ -308,8 +308,8 @@ if __name__ == "__main__":
                         help='input batch size for training (default: 100)')
     parser.add_argument('--split', type=int, default=1, metavar='N',
                         help='sections to split each video into (default: 1)')
-    parser.add_argument('--epochs', type=int, default=1000, metavar='N',
-                        help='number of epochs to train (default: 1000)')
+    parser.add_argument('--epochs', type=int, default=100, metavar='N',
+                        help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
                         help='learning rate (default: 1e-4)')
     parser.add_argument('--base_rate', type=float, default=1.0, metavar='N',
