@@ -17,29 +17,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-parent_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.insert(0, parent_dir)
-
 from datasets.spirals import SpiralsDataset
 from datasets.multiseq import seq_collate_dict
 
 from models import MultiVRNN
-
-def eval_ccc(y_true, y_pred):
-    """Computes concordance correlation coefficient."""
-    true_mean = np.mean(y_true)
-    true_var = np.var(y_true)
-    pred_mean = np.mean(y_pred)
-    pred_var = np.var(y_pred)
-    covar = np.cov(y_true, y_pred, bias=True)[0][1]
-    ccc = 2*covar / (true_var + pred_var +  (pred_mean-true_mean) ** 2)
-    return ccc
-
-def anneal(min_val, max_val, t, anneal_len):
-    if t >= anneal_len:
-        return max_val
-    else:
-        return (max_val - min_val) * t/anneal_len
+from utils import eval_ccc, anneal
 
 def train(loader, model, optimizer, epoch, args):
     model.train()
@@ -93,7 +75,6 @@ def evaluate(dataset, model, args, fig_path=None):
     predictions = {m: [] for m in args.modalities}
     data_num = 0
     kld_loss, rec_loss = [], []
-    drop_frac, keep_frac = 0.5, 0.75
     for data in dataset:
         # Collate data into batch dictionary of size 1
         data, mask, lengths = seq_collate_dict([data])
@@ -105,11 +86,12 @@ def evaluate(dataset, model, args, fig_path=None):
         inputs = {m: torch.tensor(data[m]) for m in data.keys()}
         for m in inputs.keys():
             # Randomly remove a fraction of observations
-            drop_idx = np.random.choice(max(lengths),
-                                        int(drop_frac * max(lengths)), False)
+            drop_n = int(args.drop_frac * max(lengths))
+            drop_idx = np.random.choice(max(lengths), drop_n, False)
             inputs[m][drop_idx,:,:] = float('nan')
             # Remove final fraction of observations to test extrapolation
-            inputs[m][int(keep_frac * max(lengths)):,:,:] = float('nan')
+            keep_n = int(args.keep_frac * max(lengths))
+            inputs[m][keep_n:,:,:] = float('nan')
         # Run forward pass using all modalities
         infer, prior, outputs = model(inputs, lengths)
         # Compute and store KLD and reconstruction losses
@@ -223,8 +205,13 @@ def main(args):
     
     # Construct model
     dims = {'spiral-x': 1, 'spiral-y': 1}
-    model = MultiVRNN(args.modalities, dims=(dims[m] for m in args.modalities),
-                      device=args.device)
+    if args.model == 'MultiVRNN':
+        model = MultiVRNN(args.modalities,
+                          dims=(dims[m] for m in args.modalities),
+                          device=args.device)
+    else:
+        print('Model name not recognized'.)
+        return
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'])
 
@@ -302,6 +289,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('--model', type=str, default='MultiVRNN', metavar='S',
+                        help='name of model to train (default: MultiVRNN)')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
     parser.add_argument('--batch_size', type=int, default=100, metavar='N',
@@ -320,6 +309,10 @@ if __name__ == "__main__":
                         help='reconstruction loss multiplier (default: 1/dims')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
+    parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
+                        help='fraction of data to randomly drop at test time')
+    parser.add_argument('--keep_frac', type=float, default=0.75, metavar='F',
+                        help='fraction of trajectory to keep at test time')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
@@ -336,9 +329,9 @@ if __name__ == "__main__":
                         help='evaluate without training (default: false)')
     parser.add_argument('--load', type=str, default=None,
                         help='path to trained model (either resume or test)')
-    parser.add_argument('--data_dir', type=str, default="../datasets/spirals",
+    parser.add_argument('--data_dir', type=str, default="./datasets/spirals",
                         help='path to data base directory')
-    parser.add_argument('--save_dir', type=str, default="./vrnn_save",
+    parser.add_argument('--save_dir', type=str, default="./spirals_save",
                         help='path to save models and predictions')
     parser.add_argument('--train_subdir', type=str, default='train',
                         help='training data subdirectory')
