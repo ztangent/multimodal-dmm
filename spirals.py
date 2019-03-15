@@ -1,4 +1,4 @@
-"""Training code for VRNN model."""
+"""Training code for the noisy spirals dataset."""
 
 from __future__ import division
 from __future__ import print_function
@@ -210,7 +210,7 @@ def main(args):
                           dims=(dims[m] for m in args.modalities),
                           device=args.device)
     else:
-        print('Model name not recognized'.)
+        print('Model name not recognized.')
         return
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'])
