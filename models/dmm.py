@@ -1,12 +1,9 @@
-"""Multimodal Variational Recurrent Neural Network, adapted from
-https://github.com/emited/VariationalRecurrentNeuralNetwork
+"""Multimodal Deep Markov Model (MDMM).
 
-Original VRNN described in https://arxiv.org/abs/1506.02216
-using unimodal isotropic gaussian distributions for 
-inference, prior, and generating models.
+Original DMM described by Krishan et. al. (https://arxiv.org/abs/1609.09869)
 
 To handle missing modalities, we use the MVAE approach
-described in https://arxiv.org/abs/1802.05335.
+described by Wu & Goodman (https://arxiv.org/abs/1802.05335).
 
 Requires pytorch >= 0.4.1 for nn.ModuleDict
 """
@@ -19,18 +16,18 @@ import math
 import torch
 import torch.nn as nn
 
-class MultiVRNN(nn.Module):
-    def __init__(self, modalities, dims, h_dim=16, z_dim=16,
-                 n_layers=1, bias=True, device=torch.device('cuda:0')):
+class MultiDMM(nn.Module):
+    def __init__(self, modalities, dims, phi_dim=32, z_dim=32,
+                 n_layers=1, bias=False, device=torch.device('cuda:0')):
         """
-        Construct multimodal variational recurrent neural network.
+        Construct multimodal deep Markov model.
 
         modalities : list of str
             list of names for each modality
         dims : list of int
             list of feature dimensions for each modality
-        h_dim : int
-            number of hidden dimensions
+        phi_dim : int
+            size of intermediary layers
         z_dim : int
             number of latent dimensions
         n_layers : int
@@ -40,11 +37,11 @@ class MultiVRNN(nn.Module):
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
-        super(MultiVRNN, self).__init__()
+        super(MultiDMM, self).__init__()
         self.modalities = modalities
         self.n_mods = len(modalities)
         self.dims = dict(zip(modalities, dims))
-        self.h_dim = h_dim
+        self.phi_dim = phi_dim
         self.z_dim = z_dim
         self.n_layers = n_layers
 
@@ -52,51 +49,56 @@ class MultiVRNN(nn.Module):
         self.phi = nn.ModuleDict()
         for m in self.modalities:
             self.phi[m] = nn.Sequential(
-                nn.Linear(self.dims[m], h_dim),
+                nn.Linear(self.dims[m], phi_dim),
                 nn.ReLU())
-        self.phi_z = nn.Sequential(
-            nn.Linear(z_dim, h_dim),
-            nn.ReLU())
-
-        # Encoder p(z|x) = N(mu(x,h), sigma(x,h))
+            
+        # Encoders for each modality p(z|x) = N(mu(x), sigma(x))
         self.enc = nn.ModuleDict()
         self.enc_mean = nn.ModuleDict()
         self.enc_std = nn.ModuleDict()
         for m in self.modalities:
             self.enc[m] = nn.Sequential(
-                nn.Linear(h_dim + h_dim, h_dim),
+                nn.Linear(phi_dim, phi_dim),
                 nn.ReLU())
-            self.enc_mean[m] = nn.Linear(h_dim, z_dim)
+            self.enc_mean[m] = nn.Linear(phi_dim, z_dim)
             self.enc_std[m] = nn.Sequential(
-                nn.Linear(h_dim, z_dim),
+                nn.Linear(phi_dim, z_dim),
                 nn.Softplus())
 
-        # Prior p(z) = N(mu(h), sigma(h))
-        self.prior = nn.Sequential(
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU())
-        self.prior_mean = nn.Linear(h_dim, z_dim)
-        self.prior_std = nn.Sequential(
-            nn.Linear(h_dim, z_dim),
-            nn.Softplus())
-
-        # Decoders p(xi|z) = N(mu(z,h), sigma(z,h))
+        # Decoders for each modality p(xi|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
         self.dec_mean = nn.ModuleDict()
         self.dec_std = nn.ModuleDict()
         for m in self.modalities:
             self.dec[m] = nn.Sequential(
-                nn.Linear(h_dim + h_dim, h_dim),
+                nn.Linear(z_dim, phi_dim),
                 nn.ReLU())
-            self.dec_mean[m] = nn.Linear(h_dim, self.dims[m])
+            self.dec_mean[m] = nn.Linear(phi_dim, self.dims[m])
             self.dec_std[m] = nn.Sequential(
-                nn.Linear(h_dim, self.dims[m]),
+                nn.Linear(phi_dim, self.dims[m]),
                 nn.Softplus())
-        
-        # Recurrence h_next = f(x,z,h)
-        self.rnn = nn.GRU((self.n_mods + 1) * h_dim, h_dim, n_layers, bias)
-        self.h0 = nn.Parameter(torch.zeros(self.n_layers, 1, self.h_dim))
-        
+
+        # Initial latent state
+        self.z0 = nn.Parameter(torch.zeros(1, z_dim))
+            
+        # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
+        self.fwd = nn.Sequential(
+            nn.Linear(z_dim, phi_dim),
+            nn.ReLU())
+        self.fwd_mean = nn.Linear(phi_dim, z_dim)
+        self.fwd_std = nn.Sequential(
+            nn.Linear(phi_dim, z_dim),
+            nn.Softplus())
+
+        # Backward conditional q(z|z_next) = N(mu(z_next), sigma(z_next))
+        self.bwd = nn.Sequential(
+            nn.Linear(z_dim, phi_dim),
+            nn.ReLU())
+        self.bwd_mean = nn.Linear(phi_dim, z_dim)
+        self.bwd_std = nn.Sequential(
+            nn.Linear(phi_dim, z_dim),
+            nn.Softplus())
+            
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
@@ -138,29 +140,47 @@ class MultiVRNN(nn.Module):
         batch_size, seq_len = len(lengths), max(lengths)
 
         # Initialize list accumulators
+        z_fwd_mean, z_fwd_std = [], []
+        z_bwd_mean, z_bwd_std = [], []
+        z_obs_mean, z_obs_std, z_obs_masks = [], [], []
         prior_mean, prior_std = [], []
         infer_mean, infer_std = [], []
         out_mean = {m: [] for m in self.modalities}
         out_std = {m: [] for m in self.modalities}
         
-        # Initialize hidden state
-        h = self.h0.repeat(1, batch_size, 1)
-            
+        # Initialize latent state
+        z_t = self.z0.repeat(batch_size, 1)
+        # Forward pass to sample from p(z_t) for all timesteps
         for t in range(seq_len):
-            # Compute prior for z
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
-            prior_mean.append(prior_mean_t)
-            prior_std.append(prior_std_t)
+            # Compute params for p(z_t|z_{t-1})
+            fwd_t = self.fwd(z_t)
+            z_fwd_mean_t = self.fwd_mean(fwd_t)
+            z_fwd_std_t = self.fwd_std(fwd_t)
+            z_fwd_mean.append(z_fwd_mean_t)
+            z_fwd_std.append(z_fwd_std_t)
+            
+            # Sample z_t from p(z_t|z_{t-1})
+            z_t = self._sample_gauss(z_fwd_mean_t, z_fwd_std_t)
 
-            # Accumulate list of the means and std for z
-            z_mean_t = [prior_mean_t]
-            z_std_t = [prior_std_t]
+        # Backward pass to sample p(z_t|x_t, ..., x_T)
+        for t in reversed(range(seq_len)):
+            # Add p(z_t) to the PoE calculation
+            z_mean_t = [z_fwd_mean[t]]
+            z_std_t = [z_fwd_std[t]]
             masks = [torch.ones((batch_size,), dtype=torch.uint8,
                                 device=self.device)]
-            
-            # Encode modalities to latent code z
+
+            # Add p(z_t|z_{t+1}) to the PoE calculation
+            if len(z_bwd_mean) > 0:
+                z_mean_t.append(z_bwd_mean[-1])
+                z_std_t.append(z_bwd_mean[-1])
+                masks.append(torch.ones((batch_size,), dtype=torch.uint8,
+                                        device=self.device))
+                        
+            # Encode modalities of x_t to latent code z_t
+            z_obs_mean.append([])
+            z_obs_std.append([])
+            z_obs_masks.append([])
             for m in self.modalities:
                 # Ignore missing modalities
                 if m not in inputs:
@@ -171,56 +191,86 @@ class MultiVRNN(nn.Module):
                 input_m_t[torch.isnan(input_m_t)] = 0.0
                 # Extract features 
                 phi_m_t = self.phi[m](input_m_t)
-                enc_in_t = torch.cat([phi_m_t, h[-1]], 1)
                 # Compute mean and std of latent z given modality m
-                enc_m_t = self.enc[m](enc_in_t)
+                enc_m_t = self.enc[m](phi_m_t)
                 z_mean_m_t = self.enc_mean[m](enc_m_t)
                 z_std_m_t = self.enc_std[m](enc_m_t)
-                # Concatenate to list of inferred means and stds
+                z_obs_mean[-1].append(z_mean_m_t)
+                z_obs_std[-1].append(z_std_m_t)
+                z_obs_masks[-1].append(mask)
+                # Add p(z_t|x_{t,m}) to the PoE calculation
                 z_mean_t.append(z_mean_m_t)
                 z_std_t.append(z_std_m_t)
                 masks.append(mask)
+                
+            # Combine the Gaussian parameters using PoE
+            z_mean_t = torch.stack(z_mean_t, dim=0)
+            z_std_t = torch.stack(z_std_t, dim=0)
+            mask = torch.stack(masks, dim=0)
+            z_mean_t, z_var_t = \
+                self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
+            z_std_t = z_var_t.pow(0.5)
+            
+            # Sample z_t from p(z_t|x_t, ..., x_T)
+            z_t = self._sample_gauss(z_mean_t, z_std_t)
 
-            # Combine the inferred distributions from each modality using PoE
+            # Compute params for p(z_{t-1}|z_t)
+            bwd_t = self.bwd(z_t)
+            z_bwd_mean_t = self.bwd_mean(bwd_t)
+            z_bwd_std_t = self.bwd_std(bwd_t)
+            z_bwd_mean.append(z_bwd_mean_t)
+            z_bwd_std.append(z_bwd_std_t)
+            
+        # Reverse lists that were accumulated backwards
+        z_bwd_mean.reverse()
+        z_bwd_std.reverse()
+        z_obs_mean.reverse()
+        z_obs_std.reverse()
+        z_obs_masks.reverse()
+            
+        # Re-initialize latent state
+        z_t = self.z0.repeat(batch_size, 1)
+        # Final forward pass to infer p(z_1:T|x_1:T) and reconstruct x_1:T
+        for t in range(seq_len):
+            # Compute params for p(z_t|z_{t-1})
+            prior_t = self.fwd(z_t)
+            prior_mean_t = self.fwd_mean(prior_t)
+            prior_std_t = self.fwd_std(prior_t)
+            prior_mean.append(prior_mean_t)
+            prior_std.append(prior_std_t)
+
+            # Concatenate p(z_t|z_{t-1}), p(z_t|x_t), p(z_t|z_{t+1})
+            z_mean_t = list(z_obs_mean[t]) + [prior_mean_t]
+            z_std_t = list(z_obs_std[t]) + [prior_std_t]
+            prior_mask = torch.ones((batch_size,), dtype=torch.uint8,
+                                    device=self.device)
+            masks = list(z_obs_masks[t]) + [prior_mask]
+            if t < seq_len - 1:
+                z_mean_t.append(z_bwd_mean[t])
+                z_std_t.append(z_bwd_std[t])
+                masks.append(torch.ones((batch_size,), dtype=torch.uint8,
+                                        device=self.device))
+
+            # Compute p(z_t|z_{t-1}, x_t, ..., x_T) using PoE
             z_mean_t = torch.stack(z_mean_t, dim=0)
             z_std_t = torch.stack(z_std_t, dim=0)
             mask = torch.stack(masks, dim=0)
             infer_mean_t, infer_var_t = \
                 self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
             infer_std_t = infer_var_t.pow(0.5)
-            
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
-
-            # Sample z from approximate posterior q(z|x)
-            zq_t = self._sample_gauss(infer_mean_t, infer_std_t)
-            phi_zq_t = self.phi_z(zq_t)
             
+            # Sample z from p(z_t|z_{t-1}, x_t, ..., x_T)
+            z_t = self._sample_gauss(infer_mean_t, infer_std_t)
+
             # Decode sampled z to reconstruct inputs
-            dec_in_t = torch.cat([phi_zq_t, h[-1]], 1)
             for m in self.modalities:
-                out_m_t = self.dec[m](dec_in_t)
+                out_m_t = self.dec[m](z_t)
                 out_mean_m_t = self.dec_mean[m](out_m_t)
                 out_std_m_t = self.dec_std[m](out_m_t)
                 out_mean[m].append(out_mean_m_t)
                 out_std[m].append(out_std_m_t)
-
-            # Fill missing inputs with reconstructions then extract features
-            phi_x_t = []
-            for m in self.modalities:
-                if m not in inputs:
-                    input_m_t = out_mean[m][-1].detach()
-                else:
-                    input_m_t = torch.tensor(inputs[m][t])
-                    nan_mask = torch.isnan(input_m_t)
-                    input_m_t[nan_mask] = out_mean[m][-1][nan_mask]
-                phi_m_t = self.phi[m](input_m_t)
-                phi_x_t.append(phi_m_t)
-            phi_x_t = torch.cat(phi_x_t, 1)
-                
-            # Compute h using filled-in x and inferred z (h_next = f(x,z,h))
-            rnn_in = torch.cat([phi_x_t, phi_zq_t], 1)
-            _, h = self.rnn(rnn_in.unsqueeze(0), h)
 
         # Concatenate lists to tensors
         infer = (torch.stack(infer_mean), torch.stack(infer_std))
@@ -235,35 +285,22 @@ class MultiVRNN(nn.Module):
     def sample(self, batch_size, seq_len):
         """Generates a sequence of the input data by sampling."""
         out_mean = {m: [] for m in self.modalities}
-        h = self.h0.repeat(1, batch_size, 1)
+        z_t = self.z0.repeat(batch_size, 1)
 
         for t in range(seq_len):
             # Compute prior
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
+            prior_t = self.fwd(z_t)
+            prior_mean_t = self.fwd_mean(prior_t)
+            prior_std_t = self.fwd_std(prior_t)
 
             # Sample from prior
             z_t = self._sample_gauss(prior_mean_t, prior_std_t)
-            phi_z_t = self.phi_z(z_t)
             
             # Decode sampled z to reconstruct inputs
-            dec_in_t = torch.cat([phi_z_t, h[-1]], 1)
             for m in self.modalities:
-                out_m_t = self.dec[m](dec_in_t)
+                out_m_t = self.dec[m](z_t)
                 out_mean_m_t = self.dec_mean[m](out_m_t)
                 out_mean[m].append(out_mean_m_t)
-
-            # Extract features from reconstructions
-            phi_x_t = []
-            for m in self.modalities:
-                phi_m_t = self.phi[m](out_mean[m][-1])
-                phi_x_t.append(phi_m_t)
-            phi_x_t = torch.cat(phi_x_t, 1)
-                
-            # Recurrence h_next = f(x,z,h)
-            rnn_in = torch.cat([phi_x_t, phi_z_t], 1)
-            _, h = self.rnn(rnn_in.unsqueeze(0), h)
 
         for m in self.modalities:
             out_mean[m] = torch.stack(out_mean[m])
@@ -366,8 +403,8 @@ if __name__ == "__main__":
                              args.dir, args.subset, base_rate=2.0,
                              truncate=True, item_as_dict=True)
     print("Building model...")
-    model = MultiVRNN(['spiral-x', 'spiral-y'], [1, 1],
-                      device=torch.device('cpu'))
+    model = MultiDMM(['spiral-x', 'spiral-y'], [1, 1],
+                     device=torch.device('cpu'))
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths = seq_collate_dict([dataset[0]])
