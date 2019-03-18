@@ -126,7 +126,7 @@ class MultiVRNN(nn.Module):
         product_var = 1. / torch.sum(T, dim=0)
         return product_mean, product_var
         
-    def forward(self, inputs, lengths):
+    def forward(self, inputs, lengths, sample=True):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         inputs : dict of str : torch.tensor
@@ -134,6 +134,8 @@ class MultiVRNN(nn.Module):
            for max sequence length T, batch size B and input dims D
         lengths : list of int
            lengths of all input sequences in the batch
+        sample: bool
+           whether to sample from z_t (default) or return MAP estimate
         """
         batch_size, seq_len = len(lengths), max(lengths)
 
@@ -192,8 +194,11 @@ class MultiVRNN(nn.Module):
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
 
-            # Sample z from approximate posterior q(z|x)
-            zq_t = self._sample_gauss(infer_mean_t, infer_std_t)
+            if sample:
+                # Sample z from approximate posterior q(z|x)
+                zq_t = self._sample_gauss(infer_mean_t, infer_std_t)
+            else:
+                zq_t = infer_mean_t
             phi_zq_t = self.phi_z(zq_t)
             
             # Decode sampled z to reconstruct inputs

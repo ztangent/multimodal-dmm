@@ -18,7 +18,8 @@ import torch.nn as nn
 
 class MultiDMM(nn.Module):
     def __init__(self, modalities, dims, phi_dim=32, z_dim=32,
-                 n_layers=1, bias=False, device=torch.device('cuda:0')):
+                 n_layers=1, bias=False, n_bwd_particles=5,
+                 device=torch.device('cuda:0')):
         """
         Construct multimodal deep Markov model.
 
@@ -98,7 +99,10 @@ class MultiDMM(nn.Module):
         self.bwd_std = nn.Sequential(
             nn.Linear(phi_dim, z_dim),
             nn.Softplus())
-            
+
+        # Number of sampling particles in backward pass
+        self.n_bwd_particles = n_bwd_particles
+        
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
@@ -127,8 +131,29 @@ class MultiDMM(nn.Module):
         product_mean = torch.sum(mean * T, dim=0) / torch.sum(T, dim=0)
         product_var = 1. / torch.sum(T, dim=0)
         return product_mean, product_var
-        
-    def forward(self, inputs, lengths):
+
+    def mean_of_experts(self, mean, var, mask=None):
+        """
+        Return mean and variance of a mixture of Gaussian experts
+
+        mean : torch.tensor
+            (M, B, D) for M experts, batch size B, and D latent dims
+        var : torch.tensor
+            (M, B, D) for M experts, batch size B, and D latent dims
+        mask : torch.tensor
+            (M, B) for M experts and batch size B
+        """
+        # Set missing data to zero so they are excluded from calculation
+        if mask is None:
+            mask = 1 - torch.isnan(var[:,:,0])
+        mean = mean * mask.float().unsqueeze(-1)
+        var = var * mask.float().unsqueeze(-1)
+        sum_mean = torch.mean(mean, dim=0)
+        sum_var = torch.mean(var, dim=0) + (torch.mean(mean.pow(2), dim=0) -
+                                            sum_mean.pow(2))
+        return sum_mean, sum_var
+    
+    def forward(self, inputs, lengths, sample=True):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         inputs : dict of str : torch.tensor
@@ -136,6 +161,8 @@ class MultiDMM(nn.Module):
            for max sequence length T, batch size B and input dims D
         lengths : list of int
            lengths of all input sequences in the batch
+        sample: bool
+           whether to sample from z_t (default) or return MAP estimate
         """
         batch_size, seq_len = len(lengths), max(lengths)
 
@@ -158,9 +185,12 @@ class MultiDMM(nn.Module):
             z_fwd_std_t = self.fwd_std(fwd_t)
             z_fwd_mean.append(z_fwd_mean_t)
             z_fwd_std.append(z_fwd_std_t)
-            
-            # Sample z_t from p(z_t|z_{t-1})
-            z_t = self._sample_gauss(z_fwd_mean_t, z_fwd_std_t)
+
+            if sample:
+                # Sample z_t from p(z_t|z_{t-1})
+                z_t = self._sample_gauss(z_fwd_mean_t, z_fwd_std_t)
+            else:
+                z_t = z_fwd_mean_t
 
         # Backward pass to sample p(z_t|x_t, ..., x_T)
         for t in reversed(range(seq_len)):
@@ -210,14 +240,21 @@ class MultiDMM(nn.Module):
             z_mean_t, z_var_t = \
                 self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
             z_std_t = z_var_t.pow(0.5)
-            
-            # Sample z_t from p(z_t|x_t, ..., x_T)
-            z_t = self._sample_gauss(z_mean_t, z_std_t)
 
-            # Compute params for p(z_{t-1}|z_t)
-            bwd_t = self.bwd(z_t)
-            z_bwd_mean_t = self.bwd_mean(bwd_t)
-            z_bwd_std_t = self.bwd_std(bwd_t)
+            # Sample params for p(z_{t-1}|z_t) under p(z_t|x_t, ..., x_T)
+            z_bwd_mean_t, z_bwd_std_t = [], []
+            for k in range(self.n_bwd_particles):
+                z_t = self._sample_gauss(z_mean_t, z_std_t)
+                bwd_t = self.bwd(z_t)
+                z_bwd_mean_t.append(self.bwd_mean(bwd_t))
+                z_bwd_std_t.append(self.bwd_std(bwd_t))
+
+            # Take average of sampled distributions
+            z_bwd_mean_t = torch.stack(z_bwd_mean_t, dim=0)
+            z_bwd_std_t = torch.stack(z_bwd_std_t, dim=0)
+            z_bwd_mean_t, z_bwd_var_t = \
+                self.mean_of_experts(z_bwd_mean_t, z_bwd_std_t.pow(2))
+            z_bwd_std_t = z_bwd_var_t.pow(0.5)
             z_bwd_mean.append(z_bwd_mean_t)
             z_bwd_std.append(z_bwd_std_t)
             
@@ -260,9 +297,12 @@ class MultiDMM(nn.Module):
             infer_std_t = infer_var_t.pow(0.5)
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
-            
-            # Sample z from p(z_t|z_{t-1}, x_t, ..., x_T)
-            z_t = self._sample_gauss(infer_mean_t, infer_std_t)
+
+            if sample:
+                # Sample z from p(z_t|z_{t-1}, x_t, ..., x_T)
+                z_t = self._sample_gauss(infer_mean_t, infer_std_t)
+            else:
+                z_t = infer_mean_t
 
             # Decode sampled z to reconstruct inputs
             for m in self.modalities:

@@ -92,8 +92,8 @@ def evaluate(dataset, model, args, fig_path=None):
             # Remove final fraction of observations to test extrapolation
             keep_n = int(args.keep_frac * max(lengths))
             inputs[m][keep_n:,:,:] = float('nan')
-        # Run forward pass using all modalities
-        infer, prior, outputs = model(inputs, lengths)
+        # Run forward pass using all modalities, get MAP estimate
+        infer, prior, outputs = model(inputs, lengths, sample=False)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
         rec_loss.append(model.rec_loss(data, outputs, mask, args.rec_mults))
