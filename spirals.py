@@ -144,7 +144,10 @@ def save_params(args, model):
              'epochs', 'lr', 'kld_mult', 'rec_mults',
              'kld_anneal', 'base_rate']]
     df.insert(0, 'model', [model.__class__.__name__])
-    df['h_dim'] = model.h_dim
+    if hasattr(model, 'h_dim'):
+        df['h_dim'] = model.h_dim
+    if hasattr(model, 'phi_dim'):
+        df['phi_dim'] = model.phi_dim
     df['z_dim'] = model.z_dim
     df.set_index('model')
     df.to_csv(fname, mode='a', header=(not os.path.exists(fname)), sep='\t')
