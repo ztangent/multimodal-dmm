@@ -89,9 +89,11 @@ def evaluate(dataset, model, args, fig_path=None):
             drop_n = int(args.drop_frac * max(lengths))
             drop_idx = np.random.choice(max(lengths), drop_n, False)
             inputs[m][drop_idx,:,:] = float('nan')
-            # Remove final fraction of observations to test extrapolation
-            keep_n = int(args.keep_frac * max(lengths))
-            inputs[m][keep_n:,:,:] = float('nan')
+            # Remove init/final fraction of observations to test extrapolation
+            start_n = int(args.start_frac * max(lengths))
+            stop_n = int(args.stop_frac * max(lengths))
+            inputs[m][:start_n,:,:] = float('nan')
+            inputs[m][stop_n:,:,:] = float('nan')
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, outputs = model(inputs, lengths, sample=False)
         # Compute and store KLD and reconstruction losses
@@ -318,8 +320,10 @@ if __name__ == "__main__":
                         help='epochs to increase kld_mult over (default: 100)')
     parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
                         help='fraction of data to randomly drop at test time')
-    parser.add_argument('--keep_frac', type=float, default=0.75, metavar='F',
-                        help='fraction of trajectory to keep at test time')
+    parser.add_argument('--start_frac', type=float, default=0.25, metavar='F',
+                        help='fraction of test trajectory to begin at')
+    parser.add_argument('--stop_frac', type=float, default=0.75, metavar='F',
+                        help='fraction of test trajectory to stop at')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
