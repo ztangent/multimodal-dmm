@@ -110,6 +110,10 @@ class MultiVRNN(MultiDGTS):
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
         self.to(self.device)
+
+        # Initial prior
+        self.z0_mean = torch.zeros(1, z_dim).to(self.device)
+        self.z0_std = torch.ones(1, z_dim).to(self.device)
         
     def forward(self, inputs, lengths, sample=True):
         """Takes in (optionally missing) inputs and reconstructs them.
@@ -135,9 +139,13 @@ class MultiVRNN(MultiDGTS):
             
         for t in range(seq_len):
             # Compute prior for z
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
+            if t > 0:
+                prior_t = self.prior(h[-1])
+                prior_mean_t = self.prior_mean(prior_t)
+                prior_std_t = self.prior_std(prior_t)
+            else:
+                prior_mean_t = self.z0_mean.repeat(batch_size, 1)
+                prior_std_t = self.z0_std.repeat(batch_size, 1)
             prior_mean.append(prior_mean_t)
             prior_std.append(prior_std_t)
 
@@ -234,9 +242,13 @@ class MultiVRNN(MultiDGTS):
 
         for t in range(seq_len):
             # Compute prior
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
+            if t > 0:
+                prior_t = self.prior(h[-1])
+                prior_mean_t = self.prior_mean(prior_t)
+                prior_std_t = self.prior_std(prior_t)
+            else:
+                prior_mean_t = self.z0_mean.repeat(batch_size, 1)
+                prior_std_t = self.z0_std.repeat(batch_size, 1)
 
             # Sample from prior
             z_t = self._sample_gauss(prior_mean_t, prior_std_t)
