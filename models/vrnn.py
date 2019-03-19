@@ -23,7 +23,8 @@ from .dgts import MultiDGTS
 
 class MultiVRNN(MultiDGTS):
     def __init__(self, modalities, dims, h_dim=16, z_dim=16,
-                 n_layers=1, bias=True, device=torch.device('cuda:0')):
+                 n_layers=1, bias=True, recur_mode='no_inputs',
+                 device=torch.device('cuda:0')):
         """
         Construct multimodal variational recurrent neural network.
 
@@ -39,6 +40,8 @@ class MultiVRNN(MultiDGTS):
             number of RNN layers
         bias : bool
             whether RNN should learn a bias
+        recur_mode : str ('use_inputs', 'no_inputs')
+            whether h should be a function of x
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
@@ -49,6 +52,7 @@ class MultiVRNN(MultiDGTS):
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.n_layers = n_layers
+        self.recur_mode = recur_mode
 
         # Feature-extracting transformations
         self.phi = nn.ModuleDict()
@@ -95,8 +99,11 @@ class MultiVRNN(MultiDGTS):
                 nn.Linear(h_dim, self.dims[m]),
                 nn.Softplus())
         
-        # Recurrence h_next = f(x,z,h)
-        self.rnn = nn.GRU((self.n_mods + 1) * h_dim, h_dim, n_layers, bias)
+        # Recurrence h_next = f(z,h) or f(x,z,h)
+        if recur_mode == 'use_inputs':
+            self.rnn = nn.GRU((self.n_mods + 1) * h_dim, h_dim, n_layers, bias)
+        else:
+            self.rnn = nn.GRU(h_dim, h_dim, n_layers, bias)
         self.h0 = nn.Parameter(torch.zeros(self.n_layers, 1, self.h_dim))
         
         # Store module in specified device (CUDA/CPU)
@@ -188,22 +195,27 @@ class MultiVRNN(MultiDGTS):
                 out_mean[m].append(out_mean_m_t)
                 out_std[m].append(out_std_m_t)
 
-            # Fill missing inputs with reconstructions then extract features
-            phi_x_t = []
-            for m in self.modalities:
-                if m not in inputs:
-                    input_m_t = out_mean[m][-1].detach()
-                else:
-                    input_m_t = torch.tensor(inputs[m][t])
-                    nan_mask = torch.isnan(input_m_t)
-                    input_m_t[nan_mask] = out_mean[m][-1][nan_mask]
-                phi_m_t = self.phi[m](input_m_t)
-                phi_x_t.append(phi_m_t)
-            phi_x_t = torch.cat(phi_x_t, 1)
+            if self.recur_mode == 'use_inputs':
+                # Impute missing inputs then extract features
+                phi_x_t = []
+                for m in self.modalities:
+                    if m not in inputs:
+                        input_m_t = out_mean[m][-1].detach()
+                    else:
+                        input_m_t = torch.tensor(inputs[m][t])
+                        nan_mask = torch.isnan(input_m_t)
+                        input_m_t[nan_mask] = out_mean[m][-1][nan_mask]
+                    phi_m_t = self.phi[m](input_m_t)
+                    phi_x_t.append(phi_m_t)
+                phi_x_t = torch.cat(phi_x_t, 1)
+
+                # Compute h using imputed x and inferred z (h_next = f(x,z,h))
+                rnn_in = torch.cat([phi_x_t, phi_zq_t], 1)
+                _, h = self.rnn(rnn_in.unsqueeze(0), h)
                 
-            # Compute h using filled-in x and inferred z (h_next = f(x,z,h))
-            rnn_in = torch.cat([phi_x_t, phi_zq_t], 1)
-            _, h = self.rnn(rnn_in.unsqueeze(0), h)
+            else:
+                # Compute h using inferred z (h_next = f(x,z,h))
+                _, h = self.rnn(phi_zq_t.unsqueeze(0), h)
 
         # Concatenate lists to tensors
         infer = (torch.stack(infer_mean), torch.stack(infer_std))
@@ -237,16 +249,19 @@ class MultiVRNN(MultiDGTS):
                 out_mean_m_t = self.dec_mean[m](out_m_t)
                 out_mean[m].append(out_mean_m_t)
 
-            # Extract features from reconstructions
-            phi_x_t = []
-            for m in self.modalities:
-                phi_m_t = self.phi[m](out_mean[m][-1])
-                phi_x_t.append(phi_m_t)
-            phi_x_t = torch.cat(phi_x_t, 1)
-                
-            # Recurrence h_next = f(x,z,h)
-            rnn_in = torch.cat([phi_x_t, phi_z_t], 1)
-            _, h = self.rnn(rnn_in.unsqueeze(0), h)
+            if self.recur_mode == 'use_inputs':
+                # Extract features from reconstructions
+                phi_x_t = []
+                for m in self.modalities:
+                    phi_m_t = self.phi[m](out_mean[m][-1])
+                    phi_x_t.append(phi_m_t)
+                phi_x_t = torch.cat(phi_x_t, 1)
+
+                # Recurrence h_next = f(x,z,h)
+                rnn_in = torch.cat([phi_x_t, phi_z_t], 1)
+                _, h = self.rnn(rnn_in.unsqueeze(0), h)
+            else:
+                _, h = self.rnn(phi_z_t.unsqueeze(0), h)
 
         for m in self.modalities:
             out_mean[m] = torch.stack(out_mean[m])

@@ -20,7 +20,7 @@ from .dgts import MultiDGTS
 
 class MultiDMM(MultiDGTS):
     def __init__(self, modalities, dims, phi_dim=32, z_dim=32,
-                 n_layers=1, bias=False, n_bwd_particles=10,
+                 n_layers=1, bias=False, n_bwd_particles=1,
                  device=torch.device('cuda:0')):
         """
         Construct multimodal deep Markov model.
@@ -201,7 +201,10 @@ class MultiDMM(MultiDGTS):
             # Sample params for p(z_{t-1}|z_t) under p(z_t|x_t, ..., x_T)
             z_bwd_mean_t, z_bwd_std_t = [], []
             for k in range(self.n_bwd_particles):
-                z_t = self._sample_gauss(z_mean_t, z_std_t)
+                if self.n_bwd_particles == 1 and not sample:
+                    z_t = z_mean_t
+                else:
+                    z_t = self._sample_gauss(z_mean_t, z_std_t)
                 bwd_t = self.bwd(z_t)
                 z_bwd_mean_t.append(self.bwd_mean(bwd_t))
                 z_bwd_std_t.append(self.bwd_std(bwd_t))
