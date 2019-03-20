@@ -20,7 +20,7 @@ from .dgts import MultiDGTS
 
 class MultiDMM(MultiDGTS):
     def __init__(self, modalities, dims, phi_dim=32, z_dim=32,
-                 n_layers=1, bias=False, n_bwd_particles=1,
+                 z0_mean=0.0, z0_std=1.0, n_bwd_particles=1,
                  device=torch.device('cuda:0')):
         """
         Construct multimodal deep Markov model.
@@ -33,10 +33,6 @@ class MultiDMM(MultiDGTS):
             size of intermediary layers
         z_dim : int
             number of latent dimensions
-        n_layers : int
-            number of RNN layers
-        bias : bool
-            whether RNN should learn a bias
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
@@ -46,7 +42,6 @@ class MultiDMM(MultiDGTS):
         self.dims = dict(zip(modalities, dims))
         self.phi_dim = phi_dim
         self.z_dim = z_dim
-        self.n_layers = n_layers
 
         # Feature-extracting transformations
         self.phi = nn.ModuleDict()
@@ -80,9 +75,6 @@ class MultiDMM(MultiDGTS):
             self.dec_std[m] = nn.Sequential(
                 nn.Linear(phi_dim, self.dims[m]),
                 nn.Softplus())
-
-        # Initial latent state
-        self.z0 = nn.Parameter(torch.zeros(1, z_dim))
             
         # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         self.fwd = nn.Sequential(
@@ -109,6 +101,10 @@ class MultiDMM(MultiDGTS):
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
         self.to(self.device)
+
+        # Initial prior
+        self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
+        self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)        
     
     def forward(self, inputs, lengths, sample=True):
         """Takes in (optionally missing) inputs and reconstructs them.
@@ -132,14 +128,16 @@ class MultiDMM(MultiDGTS):
         out_mean = {m: [] for m in self.modalities}
         out_std = {m: [] for m in self.modalities}
         
-        # Initialize latent state
-        z_t = self.z0.repeat(batch_size, 1)
         # Forward pass to sample from p(z_t) for all timesteps
         for t in range(seq_len):
             # Compute params for p(z_t|z_{t-1})
-            fwd_t = self.fwd(z_t)
-            z_fwd_mean_t = self.fwd_mean(fwd_t)
-            z_fwd_std_t = self.fwd_std(fwd_t)
+            if t > 0:
+                fwd_t = self.fwd(z_t)
+                z_fwd_mean_t = self.fwd_mean(fwd_t)
+                z_fwd_std_t = self.fwd_std(fwd_t)
+            else:
+                z_fwd_mean_t = self.z0_mean.repeat(batch_size, 1)
+                z_fwd_std_t = self.z0_std.repeat(batch_size, 1)
             z_fwd_mean.append(z_fwd_mean_t)
             z_fwd_std.append(z_fwd_std_t)
 
@@ -225,14 +223,16 @@ class MultiDMM(MultiDGTS):
         z_obs_std.reverse()
         z_obs_masks.reverse()
             
-        # Re-initialize latent state
-        z_t = self.z0.repeat(batch_size, 1)
         # Final forward pass to infer p(z_1:T|x_1:T) and reconstruct x_1:T
         for t in range(seq_len):
             # Compute params for p(z_t|z_{t-1})
-            prior_t = self.fwd(z_t)
-            prior_mean_t = self.fwd_mean(prior_t)
-            prior_std_t = self.fwd_std(prior_t)
+            if t > 0:
+                fwd_t = self.fwd(z_t)
+                prior_mean_t = self.fwd_mean(fwd_t)
+                prior_std_t = self.fwd_std(fwd_t)
+            else:
+                prior_mean_t = self.z0_mean.repeat(batch_size, 1)
+                prior_std_t = self.z0_std.repeat(batch_size, 1)
             prior_mean.append(prior_mean_t)
             prior_std.append(prior_std_t)
 
@@ -289,9 +289,13 @@ class MultiDMM(MultiDGTS):
 
         for t in range(seq_len):
             # Compute prior
-            prior_t = self.fwd(z_t)
-            prior_mean_t = self.fwd_mean(prior_t)
-            prior_std_t = self.fwd_std(prior_t)
+            if t > 0:
+                fwd_t = self.fwd(z_t)
+                prior_mean_t = self.fwd_mean(fwd_t)
+                prior_std_t = self.fwd_std(fwd_t)
+            else:
+                prior_mean_t = self.z0_mean.repeat(batch_size, 1)
+                prior_std_t = self.z0_std.repeat(batch_size, 1)
 
             # Sample from prior
             z_t = self._sample_gauss(prior_mean_t, prior_std_t)

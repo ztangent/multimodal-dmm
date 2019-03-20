@@ -23,8 +23,8 @@ from .dgts import MultiDGTS
 
 class MultiVRNN(MultiDGTS):
     def __init__(self, modalities, dims, h_dim=16, z_dim=16,
-                 n_layers=1, bias=True, recur_mode='no_inputs',
-                 device=torch.device('cuda:0')):
+                 z0_mean=0.0, z0_std=1.0, n_layers=1, bias=True,
+                 recur_mode='no_inputs', device=torch.device('cuda:0')):
         """
         Construct multimodal variational recurrent neural network.
 
@@ -112,8 +112,8 @@ class MultiVRNN(MultiDGTS):
         self.to(self.device)
 
         # Initial prior
-        self.z0_mean = torch.zeros(1, z_dim).to(self.device)
-        self.z0_std = torch.ones(1, z_dim).to(self.device)
+        self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
+        self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)
         
     def forward(self, inputs, lengths, sample=True):
         """Takes in (optionally missing) inputs and reconstructs them.
