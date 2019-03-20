@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 from datasets.spirals import SpiralsDataset
 from datasets.multiseq import seq_collate_dict
 
-from models import MultiVRNN, MultiDMM
+from models import *
 from utils import eval_ccc, anneal
 
 def train(loader, model, optimizer, epoch, args):
@@ -216,6 +216,10 @@ def main(args):
                           device=args.device)
     elif args.model in ['dmm', 'MultiDMM']:
         model = MultiDMM(args.modalities,
+                         dims=(dims[m] for m in args.modalities),
+                         device=args.device)
+    elif args.model in ['dks', 'MultiDKS']:
+        model = MultiDKS(args.modalities,
                          dims=(dims[m] for m in args.modalities),
                          device=args.device)
     else:
