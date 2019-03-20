@@ -228,7 +228,7 @@ def pad_and_merge(sequences, max_len=None):
     lengths = [len(seq) for seq in sequences]
     if max_len is None:
         max_len = max(lengths)
-    padded_seqs = torch.zeros(len(sequences), max_len, dims)
+    padded_seqs = torch.ones(len(sequences), max_len, dims) * float('nan')
     for i, seq in enumerate(sequences):
         end = lengths[i]
         padded_seqs[i, :end, :] = torch.from_numpy(seq[:end,:])

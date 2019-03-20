@@ -2,8 +2,9 @@
 
 Original DKS described by Krishan et. al. (https://arxiv.org/abs/1609.09869)
 
-We extend the DKS the handle multiple modalities by concatenating them.
-To handle missing modalities, we zero mask.
+We extend the DKS to multiple modalities by having an RNN inference network
+for each modality. When observations for a particular modality are unobserved,
+we do not update the hidden state.
 
 Requires pytorch >= 0.4.1 for nn.ModuleDict
 """
@@ -15,7 +16,6 @@ from __future__ import absolute_import
 import math
 import torch
 import torch.nn as nn
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from .dgts import MultiDGTS
 
@@ -78,8 +78,12 @@ class MultiDKS(MultiDGTS):
             nn.Linear(h_dim, z_dim),
             nn.Softplus())
 
-        # Backwards inference RNN h_prev = f(x,h)
-        self.rnn = nn.GRU(self.n_mods * h_dim, h_dim, n_layers, bias)
+        # Backwards inference RNNs h_prev = f(x,h)
+        self.rnn = nn.ModuleDict()
+        self.h0 = nn.ParameterDict()
+        for m in self.modalities:
+            self.rnn[m] = nn.GRU(h_dim, h_dim, n_layers, bias)
+            self.h0[m] = nn.Parameter(torch.zeros(n_layers, 1, h_dim))
 
         # Combiner inference network q(z) = N(mu(z_prev, h), sigma(z_prev, h))
         self.z_to_comb = nn.Sequential(
@@ -118,26 +122,38 @@ class MultiDKS(MultiDGTS):
         out_mean = {m: [] for m in self.modalities}
         out_std = {m: [] for m in self.modalities}
 
-        # Zero mask missing values and extract features (phi)
-        phi = []
+        # Zero mask missing values and extract features
+        feats, masks = dict(), dict()
         for m in self.modalities:
             if m not in inputs:
-                input_m = torch.zeros(batch_size, seq_len,
+                input_m = torch.zeros(seq_len, batch_size,
                                       self.dims[m]).to(self.device)
+                masks[m] = torch.zeros(seq_len, batch_size).to(self.device)
             else:
                 input_m = torch.tensor(inputs[m])
+                masks[m] = (1 - torch.isnan(inputs[m])).any(dim=2).float()
             input_m[torch.isnan(input_m)] = 0.0
             input_m = input_m.view(-1, self.dims[m])
-            phi_m = self.phi[m](input_m).reshape(seq_len, batch_size, -1)
-            phi.append(phi_m)
-        phi = torch.cat(phi, dim=2)
+            feats[m] = self.phi[m](input_m).reshape(seq_len, batch_size, -1)
 
-        # Backward pass through RNN inference network
-        rnn_in = pack_padded_sequence(torch.flip(phi, [0]), lengths)
-        h, _ = self.rnn(rnn_in)
-        h, _ = pad_packed_sequence(h)
-        h = torch.flip(h, [0])
+        # Initialize RNN hidden states
+        h = {m: self.h0[m].repeat(1, batch_size, 1) for m in self.modalities}
+        h_out = {m: [] for m in self.modalities}
         
+        # Backward pass through RNN inference networks
+        for t in reversed(range(seq_len)):
+            for m in self.modalities:
+                _, h_m_next = self.rnn[m](feats[m][t:t+1], h[m])
+                # Only update if modality m is observed at time t
+                mask_m = masks[m][t].view(1, batch_size, 1)
+                h[m] = mask_m * h_m_next + (1-mask_m) * h[m]
+                h_out[m].append(h[m][-1])
+
+        # Concatenate RNN outputs, sum across modalities, then flip
+        h_out = torch.stack([torch.stack(h_out[m], dim=0)
+                             for m in self.modalities], dim=-1).mean(dim=-1)
+        h_out = torch.flip(h_out, [0])
+                
         # Forward pass to infer p(z_1:T|x_1:T) and reconstruct x_1:T
         for t in range(seq_len):
             # Compute params for the prior p(z_t|z_{t-1})
@@ -153,7 +169,7 @@ class MultiDKS(MultiDGTS):
             prior_std.append(prior_std_t)
 
             # Infer the latent distribution p(z_t|z_{t-1}, x_t, ..., x_T)
-            h_comb = 0.5 * (self.z_to_comb(z_t) + h[t])
+            h_comb = 0.5 * (self.z_to_comb(z_t) + h_out[t])
             infer_mean_t = self.comb_mean(h_comb)
             infer_std_t = self.comb_std(h_comb)
             infer_mean.append(infer_mean_t)

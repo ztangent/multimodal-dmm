@@ -104,7 +104,7 @@ class MultiVRNN(MultiDGTS):
             self.rnn = nn.GRU((self.n_mods + 1) * h_dim, h_dim, n_layers, bias)
         else:
             self.rnn = nn.GRU(h_dim, h_dim, n_layers, bias)
-        self.h0 = nn.Parameter(torch.zeros(self.n_layers, 1, self.h_dim))
+        self.h0 = nn.Parameter(torch.zeros(n_layers, 1, h_dim))
         
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
