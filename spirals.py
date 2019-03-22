@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
+from matplotlib.collections import EllipseCollection
 
 import torch
 import torch.nn as nn
@@ -73,8 +74,9 @@ def train(loader, model, optimizer, epoch, args):
 def evaluate(dataset, model, args, fig_path=None):
     model.eval()
     predictions = {m: [] for m in args.modalities}
+    ranges = {m: [] for m in args.modalities}
     data_num = 0
-    kld_loss, rec_loss = [], []
+    kld_loss, rec_loss, mse_loss = [], [], []
     for data in dataset:
         # Collate data into batch dictionary of size 1
         data, mask, lengths = seq_collate_dict([data])
@@ -101,22 +103,29 @@ def evaluate(dataset, model, args, fig_path=None):
         rec_loss.append(model.rec_loss(data, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
-        # Store predictions
-        out_mean, _ = outputs
+        # Store predictions and confidence intervals
+        out_mean, out_std = outputs
         for m in out_mean.keys():
             predictions[m].append(out_mean[m].view(-1).cpu().numpy())
+            ranges[m].append(1.96 * out_std[m].view(-1).cpu().numpy())
+        # Compute mean squared error over time
+        mse = sum([(out_mean[m]-data[m]).pow(2) for m in out_mean.keys()])
+        mse_loss.append(mse.mean().item())
     # Plot predictions against truth
     if args.visualize:
-        plot_predictions(dataset, predictions, rec_loss, args, fig_path)
+        visualize(dataset, predictions, ranges, mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
+    mse_loss = sum(mse_loss) / len(dataset)
     losses = kld_loss, rec_loss
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.format(*losses))
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
+          .format(kld_loss, rec_loss, mse_loss))
     return predictions, losses
 
-def plot_predictions(dataset, predictions, metric, args, fig_path=None):
+def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
+
     # Select top 4 and bottom 4
     sel_idx = np.concatenate((np.argsort(metric)[:4],
                               np.argsort(metric)[-4:][::-1]))
@@ -125,14 +134,31 @@ def plot_predictions(dataset, predictions, metric, args, fig_path=None):
                 for i in sel_idx]
     sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
                 for i in sel_idx]
-    for i, (true, pred, m) in enumerate(zip(sel_true, sel_pred, sel_metric)):
+    sel_rng = [(ranges['spiral-x'][i], ranges['spiral-y'][i])
+               for i in sel_idx]
+    
+    for i in range(len(sel_idx)):
+        true, pred = sel_true[i], sel_pred[i]
+        rng, m = sel_rng[i], sel_metric[i]
         j, i = (i // 4), (i % 4)
         args.axes[i,j].cla()
-        args.axes[i,j].plot(true[0], true[1], 'b-')
-        args.axes[i,j].plot(pred[0], pred[1], 'c-')
+
+        # Plot confidence ellipses
+        ec = EllipseCollection(rng[0], rng[1], (0,), units='x',
+                               facecolors=('c',), alpha=0.25,
+                               offsets=np.column_stack(pred),
+                               transOffset=args.axes[i,j].transData)
+        args.axes[i,j].add_collection(ec)
+        
+        # Plot truth and predictions
+        args.axes[i,j].plot(true[0], true[1], 'b-', linewidth=1)
+        args.axes[i,j].plot(pred[0], pred[1], 'c-', linewidth=1)
+        
+        # Set limits and title
         args.axes[i,j].set_xlim(-5, 5)
         args.axes[i,j].set_ylim(-5, 5)
         args.axes[i,j].set_title("Metric = {:0.3f}".format(m))
+        
     plt.tight_layout()
     plt.draw()
     if fig_path is not None:
@@ -164,10 +190,11 @@ def load_checkpoint(path, device):
 
 def load_data(modalities, args):
     print("Loading data...")
-    train_data = SpiralsDataset(modalities, args.data_dir, args.train_subdir,
+    data_dir = os.path.abspath(args.data_dir)
+    train_data = SpiralsDataset(modalities, data_dir, args.train_subdir,
                                 base_rate=args.base_rate,
                                 truncate=True, item_as_dict=True)
-    test_data = SpiralsDataset(modalities, args.data_dir, args.test_subdir,
+    test_data = SpiralsDataset(modalities, data_dir, args.test_subdir,
                                base_rate=args.base_rate,
                                truncate=True, item_as_dict=True)
     print("Done.")
