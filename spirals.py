@@ -152,7 +152,7 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
         
         # Plot truth and predictions
         args.axes[i,j].plot(true[0], true[1], 'b-', linewidth=1)
-        args.axes[i,j].plot(pred[0], pred[1], 'c-', linewidth=1)
+        args.axes[i,j].plot(pred[0], pred[1], 'g-', linewidth=1)
         
         # Set limits and title
         args.axes[i,j].set_xlim(-5, 5)
