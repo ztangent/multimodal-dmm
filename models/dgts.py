@@ -17,18 +17,22 @@ class MultiDGTS(nn.Module):
         See https://arxiv.org/pdf/1410.7827.pdf for equations.
 
         mean : torch.tensor
-            (M, B, D) for M experts, batch size B, and D latent dims
+            (M, B, D) for M experts, batch size B, and D latent dims OR
+            (M, T, B, D) with an optional time dimension
         var : torch.tensor
-            (M, B, D) for M experts, batch size B, and D latent dims
+            (M, B, D) for M experts, batch size B, and D latent dims OR
+            (M, T, B, D) with an optional time dimension
         mask : torch.tensor
             (M, B) for M experts and batch size B
+            (M, T, B) with an optional time dimension
         """
-        var = var + eps # numerical constant for stability
+        # Add numerical constant for stability
+        var = var + eps
         # Precision matrix of i-th Gaussian expert (T = 1/sigma^2)
         T = 1. / var
         # Set missing data to zero so they are excluded from calculation
         if mask is None:
-            mask = 1 - torch.isnan(var[:,:,0])
+            mask = 1 - torch.isnan(var).any(dim=-1)
         T = T * mask.float().unsqueeze(-1)
         mean = mean * mask.float().unsqueeze(-1)
         product_mean = torch.sum(mean * T, dim=0) / torch.sum(T, dim=0)
