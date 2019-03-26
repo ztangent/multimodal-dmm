@@ -118,7 +118,7 @@ def evaluate(dataset, model, args, fig_path=None):
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
     mse_loss = sum(mse_loss) / len(dataset)
-    losses = kld_loss, rec_loss
+    losses = kld_loss, rec_loss, mse_loss
     print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
           .format(kld_loss, rec_loss, mse_loss))
     return predictions, losses
@@ -308,9 +308,10 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                pred, (kld_loss, rec_loss) = evaluate(test_data, model, args)
-            if rec_loss < best_loss:
-                best_loss = rec_loss
+                pred, losses = evaluate(test_data, model, args)
+                _, _, loss = losses
+            if loss < best_loss:
+                best_loss = loss
                 path = os.path.join(args.save_dir, "best.pth") 
                 save_checkpoint(args.modalities, model, path)
         # Save checkpoints
