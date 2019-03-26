@@ -37,6 +37,7 @@ class MultiDGTS(nn.Module):
         mean = mean * mask.float().unsqueeze(-1)
         product_mean = torch.sum(mean * T, dim=0) / torch.sum(T, dim=0)
         product_var = 1. / torch.sum(T, dim=0)
+        product_mean[torch.isnan(product_mean)] = 0.0
         return product_mean, product_var
 
     def mean_of_experts(self, mean, var, mask=None):

@@ -129,15 +129,15 @@ class MultiDMM(MultiDGTS):
 
         # Combine the Gaussian parameters using PoE
         z_mean = torch.stack(z_mean, dim=0)
-        z_std = torch.stack(z_std, dim=0)
+        z_std = torch.stack(z_std, dim=0)        
         masks = torch.stack(masks, dim=0)
         z_mean, z_var = \
             self.product_of_experts(z_mean, z_std.pow(2), masks)
         z_std = z_var.pow(0.5)
-
+        
         # Compute OR of masks across modalities
         mask = masks.any(dim=0)
-
+        
         return z_mean, z_std, mask
 
     def decode(self, z):
