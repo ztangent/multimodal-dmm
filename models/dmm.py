@@ -194,10 +194,11 @@ class MultiDMM(MultiDGTS):
         # Backward pass to sample p(z_t|x_t, ..., x_T)
         z_bwd_mean, z_bwd_std = [], []
         for t in reversed(range(t_max)):
-            # Add p(z_t) to the PoE calculation
-            z_mean_t = [z_fwd_mean[t]]
-            z_std_t = [z_fwd_std[t]]
-            masks = [torch.ones((b_dim,), dtype=torch.uint8).to(self.device)]
+            # Add q(z_t|x_t) and p(z_t) to the PoE calculation
+            z_mean_t = [z_obs_mean[t], z_fwd_mean[t]]
+            z_std_t = [z_obs_std[t], z_fwd_std[t]]
+            masks = [z_obs_mask[t],
+                     torch.ones((b_dim,), dtype=torch.uint8).to(self.device)]
 
             # Add p(z_t|z_{t+1}) to the PoE calculation
             if len(z_bwd_mean) > 0:
@@ -205,12 +206,7 @@ class MultiDMM(MultiDGTS):
                 z_std_t.append(z_bwd_mean[-1])
                 masks.append(torch.ones((b_dim,), dtype=torch.uint8,
                                         device=self.device))
-                        
-            # Add p(z_t|x_t) to the PoE calculation
-            z_mean_t.append(z_obs_mean[t])
-            z_std_t.append(z_obs_std[t])
-            masks.append(z_obs_mask[t])
-                
+
             # Combine the Gaussian parameters using PoE
             z_mean_t = torch.stack(z_mean_t, dim=0)
             z_std_t = torch.stack(z_std_t, dim=0)
