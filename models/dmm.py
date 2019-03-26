@@ -131,9 +131,8 @@ class MultiDMM(MultiDGTS):
         z_mean = torch.stack(z_mean, dim=0)
         z_std = torch.stack(z_std, dim=0)        
         masks = torch.stack(masks, dim=0)
-        z_mean, z_var = \
-            self.product_of_experts(z_mean, z_std.pow(2), masks)
-        z_std = z_var.pow(0.5)
+        z_mean, z_std = \
+            self.product_of_experts(z_mean, z_std, masks)
         
         # Compute OR of masks across modalities
         mask = masks.any(dim=0)
@@ -216,9 +215,8 @@ class MultiDMM(MultiDGTS):
             z_mean_t = torch.stack(z_mean_t, dim=0)
             z_std_t = torch.stack(z_std_t, dim=0)
             mask = torch.stack(masks, dim=0)
-            z_mean_t, z_var_t = \
-                self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
-            z_std_t = z_var_t.pow(0.5)
+            z_mean_t, z_std_t = \
+                self.product_of_experts(z_mean_t, z_std_t, mask)
 
             # Sample params for p(z_{t-1}|z_t) under p(z_t|x_t, ..., x_T)
             z_bwd_mean_t, z_bwd_std_t = [], []
@@ -234,9 +232,8 @@ class MultiDMM(MultiDGTS):
             # Take average of sampled distributions
             z_bwd_mean_t = torch.stack(z_bwd_mean_t, dim=0)
             z_bwd_std_t = torch.stack(z_bwd_std_t, dim=0)
-            z_bwd_mean_t, z_bwd_var_t = \
-                self.mean_of_experts(z_bwd_mean_t, z_bwd_std_t.pow(2))
-            z_bwd_std_t = z_bwd_var_t.pow(0.5)
+            z_bwd_mean_t, z_bwd_std_t = \
+                self.mean_of_experts(z_bwd_mean_t, z_bwd_std_t)
             z_bwd_mean.append(z_bwd_mean_t)
             z_bwd_std.append(z_bwd_std_t)
             
@@ -274,9 +271,8 @@ class MultiDMM(MultiDGTS):
             z_mean_t = torch.stack(z_mean_t, dim=0)
             z_std_t = torch.stack(z_std_t, dim=0)
             mask = torch.stack(masks, dim=0)
-            infer_mean_t, infer_var_t = \
-                self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
-            infer_std_t = infer_var_t.pow(0.5)
+            infer_mean_t, infer_std_t = \
+                self.product_of_experts(z_mean_t, z_std_t, mask)
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
 

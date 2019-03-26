@@ -11,7 +11,7 @@ import torch.nn as nn
 class MultiDGTS(nn.Module):
     """Abstract base class for deep generative time series (DGTS) models."""
     
-    def product_of_experts(self, mean, var, mask=None, eps=1e-8):
+    def product_of_experts(self, mean, std, mask=None, eps=1e-8):
         """
         Return parameters for product of independent Gaussian experts.
         See https://arxiv.org/pdf/1410.7827.pdf for equations.
@@ -19,15 +19,15 @@ class MultiDGTS(nn.Module):
         mean : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims OR
             (M, T, B, D) with an optional time dimension
-        var : torch.tensor
+        std : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims OR
             (M, T, B, D) with an optional time dimension
         mask : torch.tensor
             (M, B) for M experts and batch size B
             (M, T, B) with an optional time dimension
         """
-        # Add numerical constant for stability
-        var = var + eps
+        # Square std and add numerical constant for stability
+        var = std.pow(2) + eps
         # Precision matrix of i-th Gaussian expert (T = 1/sigma^2)
         T = 1. / var
         # Set missing data to zero so they are excluded from calculation
@@ -36,13 +36,13 @@ class MultiDGTS(nn.Module):
         T = T * mask.float().unsqueeze(-1)
         mean = mean * mask.float().unsqueeze(-1)
         product_mean = torch.sum(mean * T, dim=0) / torch.sum(T, dim=0)
-        product_var = 1. / torch.sum(T, dim=0)
         product_mean[torch.isnan(product_mean)] = 0.0
-        return product_mean, product_var
+        product_std = (1. / torch.sum(T, dim=0)).pow(0.5)
+        return product_mean, product_std
 
-    def mean_of_experts(self, mean, var, mask=None):
+    def mean_of_experts(self, mean, std, mask=None):
         """
-        Return mean and variance of a mixture of Gaussian experts
+        Return mean and standard deviation of a mixture of Gaussian experts
 
         mean : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims
@@ -53,13 +53,14 @@ class MultiDGTS(nn.Module):
         """
         # Set missing data to zero so they are excluded from calculation
         if mask is None:
-            mask = 1 - torch.isnan(var[:,:,0])
+            mask = 1 - torch.isnan(std).any(dim=-1)
         mean = mean * mask.float().unsqueeze(-1)
-        var = var * mask.float().unsqueeze(-1)
+        var = std.pow(2) * mask.float().unsqueeze(-1)
         sum_mean = torch.mean(mean, dim=0)
         sum_var = torch.mean(var, dim=0) + (torch.mean(mean.pow(2), dim=0) -
                                             sum_mean.pow(2))
-        return sum_mean, sum_var
+        sum_std = sum_var.pow(0.5)
+        return sum_mean, sum_std
     
     def loss(self, inputs, infer, prior, outputs, mask=1,
              kld_mult=1.0, rec_mults={}, avg=False):

@@ -174,9 +174,8 @@ class MultiVRNN(MultiDGTS):
             z_mean_t = torch.stack(z_mean_t, dim=0)
             z_std_t = torch.stack(z_std_t, dim=0)
             mask = torch.stack(masks, dim=0)
-            infer_mean_t, infer_var_t = \
-                self.product_of_experts(z_mean_t, z_std_t.pow(2), mask)
-            infer_std_t = infer_var_t.pow(0.5)
+            infer_mean_t, infer_std_t = \
+                self.product_of_experts(z_mean_t, z_std_t, mask)
             
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
