@@ -61,9 +61,25 @@ class MultiDGTS(nn.Module):
                                             sum_mean.pow(2))
         sum_std = sum_var.pow(0.5)
         return sum_mean, sum_std
-    
+
+    def step(self, inputs, mask, kld_mult, rec_mults, **kwargs):
+        """Custom training step for multimodal training paradigm."""
+        loss = 0
+        # Compute negative ELBO loss for individual modalities
+        for m in self.modalities:
+            infer, prior, outputs = self.forward({m : inputs[m]}, **kwargs)
+            loss += self.loss({m : inputs[m]}, infer, prior, outputs, mask,
+                              kld_mult, rec_mults)
+        # Compute negative ELBO loss for all modalities
+        if len(self.modalities) > 1:
+            infer, prior, outputs = self.forward(inputs, **kwargs)
+            loss += self.loss(inputs, infer, prior, outputs, mask,
+                              kld_mult, rec_mults)
+        return loss
+        
     def loss(self, inputs, infer, prior, outputs, mask=1,
              kld_mult=1.0, rec_mults={}, avg=False):
+        """Computes weighted sum of KLD loss and reconstruction loss."""
         loss = 0.0
         loss += kld_mult * self.kld_loss(infer, prior, mask)
         loss += self.rec_loss(inputs, outputs, mask, rec_mults)

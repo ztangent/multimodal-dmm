@@ -30,40 +30,28 @@ def train(loader, model, optimizer, epoch, args):
     data_num = 0
     log_freq = len(loader) // args.log_freq
     rec_mults = dict(args.rec_mults)
-    for batch_num, (data, mask, lengths) in enumerate(loader):
+    for b_num, (data, mask, lengths) in enumerate(loader):
         # Anneal KLD loss multipliers
-        batch_tot = batch_num + epoch*len(loader)
+        b_tot = b_num + epoch*len(loader)
         kld_mult =\
-            anneal(0.0, args.kld_mult, batch_tot, args.kld_anneal*len(loader))
+            anneal(0.0, args.kld_mult, b_tot, args.kld_anneal*len(loader))
         # Send to device
         mask = mask.to(args.device)
         for m in data.keys():
             data[m] = data[m].to(args.device)
-        # Compute ELBO loss for individual modalities
-        batch_loss = 0
-        for m in args.modalities:
-            # Run forward pass with modality m
-            infer, prior, outputs = model({m: data[m]}, lengths=lengths)
-            # Compute ELBO loss for modality m
-            batch_loss += model.loss({m: data[m]}, infer, prior, outputs, mask,
-                                     kld_mult, rec_mults)
-        if len(args.modalities) > 1:
-            # Run forward pass with all modalities
-            infer, prior, outputs = model(data, lengths=lengths)
-            # Compute ELBO loss for all modalities
-            batch_loss += model.loss(data, infer, prior, outputs, mask,
-                                     kld_mult, rec_mults)
-        loss += batch_loss
+        # Compute batch loss
+        b_loss = model.step(data, mask, kld_mult, rec_mults, lengths=lengths)
+        loss += b_loss
         # Average over number of datapoints before stepping
-        batch_loss /= sum(lengths)
-        batch_loss.backward()
+        b_loss /= sum(lengths)
+        b_loss.backward()
         # Step, then zero gradients
         optimizer.step()
         optimizer.zero_grad()
         # Keep track of total number of time-points
         data_num += sum(lengths)
         print('Batch: {:5d}\tLoss: {:10.1f}'.\
-              format(batch_num, loss/data_num))
+              format(b_num, loss/data_num))
     # Average losses and print
     loss /= data_num
     print('---')
