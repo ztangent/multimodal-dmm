@@ -1,4 +1,4 @@
-"""Multimodal Deep Markov Model (MDMM).
+"""Multimodal Bidirectional Deep Markov Model (MBDMM).
 
 Original DMM described by Krishan et. al. (https://arxiv.org/abs/1609.09869)
 
@@ -19,12 +19,12 @@ import torch.nn as nn
 from .common import GaussianMLP
 from .dgts import MultiDGTS
 
-class MultiDMM(MultiDGTS):
+class MultiBDMM(MultiDGTS):
     def __init__(self, modalities, dims, encoders=None, decoders=None,
                  h_dim=32, z_dim=32, z0_mean=0.0, z0_std=1.0,
-                 n_bwd_particles=1, device=torch.device('cuda:0')):
+                 device=torch.device('cuda:0')):
         """
-        Construct multimodal deep Markov model.
+        Construct multimodal bidirectional deep Markov model.
 
         modalities : list of str
             list of names for each modality
@@ -45,7 +45,7 @@ class MultiDMM(MultiDGTS):
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
-        super(MultiDMM, self).__init__()
+        super(MultiBDMM, self).__init__()
         self.modalities = modalities
         self.n_mods = len(modalities)
         self.dims = dict(zip(modalities, dims))
@@ -79,21 +79,17 @@ class MultiDMM(MultiDGTS):
             for m in self.modalities:
                 self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
 
-        # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
-        self.fwd = GaussianMLP(z_dim, z_dim, h_dim)
-
-        # Backward conditional q(z|z_next) = N(mu(z_next), sigma(z_next))
-        self.bwd = GaussianMLP(z_dim, z_dim, h_dim)
-
-        # Number of sampling particles in backward pass
-        self.n_bwd_particles = n_bwd_particles
+        # Latent state transitions p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
+        self.trans = nn.ModuleDict()
+        self.trans['fwd'] = GaussianMLP(z_dim, z_dim, h_dim)
+        self.trans['bwd'] = GaussianMLP(z_dim, z_dim, h_dim)
         
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
         self.to(self.device)
 
-        # Initial prior
+        # Global prior
         self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
         self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)        
 
@@ -193,16 +189,13 @@ class MultiDMM(MultiDGTS):
             prior_mask_t =\
                 torch.ones((b_dim,), dtype=torch.uint8).to(self.device)
             if len(samples) == 0:
-                # Use default prior
+                # Use global prior as initial prior
                 prior_mean_t = self.z0_mean.repeat(b_dim, 1)
                 prior_std_t = self.z0_std.repeat(b_dim, 1)
                 prior_mask_t = init_mask * prior_mask_t
             else:
                 # Compute params for each particle, then average
-                if direction == 'fwd':
-                    prior_t = [self.fwd(z_t) for z_t in z_particles]
-                else: 
-                    prior_t = [self.bwd(z_t) for z_t in z_particles]
+                prior_t = [self.trans[direction](z_t) for z_t in z_particles]
                 prior_mean_t, prior_std_t = zip(*prior_t)
                 prior_mean_t = torch.stack(prior_mean_t, dim=0)
                 prior_std_t = torch.stack(prior_std_t, dim=0)
@@ -246,7 +239,7 @@ class MultiDMM(MultiDGTS):
         z_mean, z_std = self.z_sample(t_max, b_dim, sample=True)
         out_mean, out_std = self.decode(z_mean)
         return out_mean, out_std
-            
+        
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
@@ -255,35 +248,42 @@ class MultiDMM(MultiDGTS):
            for max sequence length T, batch size B and input dims D
         lengths : list of int
            lengths of all input sequences in the batch
+        mode : 'ffilter', 'bfilter', 'fsmooth', 'bsmooth'
+           whether to filter or smooth, and in which directions
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
         """
-        lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
+        lengths = kwargs.get('lengths')
+        sample = kwargs.get('sample', True)
+        mode = kwargs.get('mode', 'fsmooth')
         t_max, b_dim = max(lengths), len(lengths)
 
-        # Infer z_t from x_t without temporal information
-        z_obs_mean, z_obs_std, z_obs_mask = self.encode(inputs)
+        # Setup global prior
+        glb_mean = self.z0_mean.repeat(t_max, b_dim, 1)
+        glb_std = self.z0_std.repeat(t_max, b_dim, 1)
+        glb_mask = torch.ones((t_max,b_dim), dtype=torch.uint8).to(self.device)
         
-        # Forward pass to sample from p(z_t) for all timesteps
-        z_fwd_mean, z_fwd_std = self.z_sample(t_max, b_dim, sample)
-        z_fwd_mask =\
-            torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
-
-        # Backward pass to approximate p(z_t|x_t, ..., x_T)
-        _, (z_bwd_mean, z_bwd_std),  _ = \
-            self.z_filter([z_fwd_mean, z_obs_mean], [z_fwd_std, z_obs_std],
-                          [z_fwd_mask, z_obs_mask], init_mask=0,
-                          direction='bwd', sample=sample,
-                          n_particles=self.n_bwd_particles)
-        z_bwd_mask =\
-            torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
-        z_bwd_mask[-1] = 0 * z_bwd_mask[-1]
-            
-        # Final forward pass to infer p(z_1:T|x_1:T)
+        # Infer z_t from x_t without temporal information
+        obs_mean, obs_std, obs_mask = self.encode(inputs)
+        
+        # Filtering pass
+        direction = 'fwd' if mode in ['ffilt', 'bsmooth'] else 'bwd'
         infer, prior, z_samples = \
-            self.z_filter([z_bwd_mean, z_obs_mean], [z_bwd_std, z_obs_std],
-                          [z_bwd_mask, z_obs_mask], init_mask=1,
-                          direction='fwd', sample=sample)
+            self.z_filter([glb_mean, obs_mean], [glb_std, obs_std],
+                          [glb_mask, obs_mask], init_mask=0,
+                          direction=direction, sample=sample)
+
+        # Smoothing pass
+        if mode in ['fsmooth', 'bsmooth']:
+            direction = 'fwd' if mode == 'fsmooth' else 'bwd'
+            flt_mean, flt_std = prior
+            flt_mask = torch.ones((t_max,b_dim),
+                                  dtype=torch.uint8).to(self.device)
+            flt_mask[-1] = 0 * flt_mask[-1]
+            infer, prior, z_samples = \
+                self.z_filter([flt_mean, obs_mean], [flt_std, obs_std],
+                              [flt_mask, obs_mask], init_mask=1,
+                              direction=direction, sample=sample)
 
         # Decode sampled z to reconstruct inputs
         out_mean, out_std = self.decode(z_samples)
@@ -291,8 +291,19 @@ class MultiDMM(MultiDGTS):
 
         return infer, prior, outputs
 
+    def step(self, inputs, mask, kld_mult, rec_mults, **kwargs):
+        """Custom training step for bidirectional training paradigm."""
+        loss = 0
+        # Compute loss when forward filtering
+        loss += super(MultiBDMM, self).step(inputs, mask, kld_mult, rec_mults,
+                                            mode='fsmooth', **kwargs)
+        # Compute loss when backward filtering
+        loss += super(MultiBDMM, self).step(inputs, mask, kld_mult, rec_mults,
+                                            mode='bsmooth', **kwargs)
+        return loss
+
 if __name__ == "__main__":
-    # Test code by running 'python -m models.dmm' from base directory
+    # Test code by running 'python -m models.bdmm' from base directory
     import os, sys, argparse
     from datasets.spirals import SpiralsDataset
     from datasets.multiseq import seq_collate_dict
@@ -309,8 +320,8 @@ if __name__ == "__main__":
                              args.dir, args.subset, base_rate=2.0,
                              truncate=True, item_as_dict=True)
     print("Building model...")
-    model = MultiDMM(['spiral-x', 'spiral-y'], [1, 1],
-                     device=torch.device('cpu'))
+    model = MultiBDMM(['spiral-x', 'spiral-y'], [1, 1],
+                      device=torch.device('cpu'))
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths = seq_collate_dict([dataset[0]])

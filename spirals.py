@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from datasets.spirals import SpiralsDataset
 from datasets.multiseq import seq_collate_dict
 
-from models import *
+import models
 from utils import eval_ccc, anneal
 
 def train(loader, model, optimizer, epoch, args):
@@ -160,10 +160,7 @@ def save_params(args, model):
              'epochs', 'lr', 'kld_mult', 'rec_mults',
              'kld_anneal', 'base_rate']]
     df.insert(0, 'model', [model.__class__.__name__])
-    if hasattr(model, 'h_dim'):
-        df['h_dim'] = model.h_dim
-    if hasattr(model, 'phi_dim'):
-        df['phi_dim'] = model.phi_dim
+    df['h_dim'] = model.h_dim
     df['z_dim'] = model.z_dim
     df.set_index('model')
     df.to_csv(fname, mode='a', header=(not os.path.exists(fname)), sep='\t')
@@ -222,21 +219,17 @@ def main(args):
 
     # Load data for specified modalities
     train_data, test_data = load_data(args.modalities, args)
-    
+
+    # Resolve short model names to long model names
+    args.model = models.names.get(args.model, args.model)
+
     # Construct model
     dims = {'spiral-x': 1, 'spiral-y': 1}
-    if args.model in ['vrnn', 'MultiVRNN']:
-        model = MultiVRNN(args.modalities,
-                          dims=(dims[m] for m in args.modalities),
-                          device=args.device)
-    elif args.model in ['dmm', 'MultiDMM']:
-        model = MultiDMM(args.modalities,
-                         dims=(dims[m] for m in args.modalities),
-                         device=args.device)
-    elif args.model in ['dks', 'MultiDKS']:
-        model = MultiDKS(args.modalities,
-                         dims=(dims[m] for m in args.modalities),
-                         device=args.device)
+    if hasattr(models, args.model):
+        constructor = getattr(models, args.model)
+        model = constructor(args.modalities,
+                            dims=(dims[m] for m in args.modalities),
+                            device=args.device)
     else:
         print('Model name not recognized.')
         return

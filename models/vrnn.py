@@ -295,7 +295,7 @@ if __name__ == "__main__":
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths = seq_collate_dict([dataset[0]])
-    infer, prior, outputs = model(data, lengths)
+    infer, prior, outputs = model(data, lengths=lengths)
     out_mean, out_std = outputs
     print("Predicted:")
     for x, y in zip(out_mean['spiral-x'], out_mean['spiral-y']):
