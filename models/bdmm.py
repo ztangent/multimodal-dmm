@@ -150,12 +150,12 @@ class MultiBDMM(MultiDGTS):
             out_std[m] = out_std_m.reshape(t_max, b_dim, -1)
         return out_mean, out_std
 
-    def z_sample(self, t_max, b_dim, sample=True):
+    def z_sample(self, t_max, b_dim, direction='fwd', sample=True):
         """Generates a sequence of latent variables."""
         z_mean, z_std = [], []
         for t in range(t_max):
             if t > 0:
-                z_mean_t, z_std_t = self.fwd(z_t)
+                z_mean_t, z_std_t = self.trans[direction](z_t)
             else:
                 z_mean_t = self.z0_mean.repeat(b_dim, 1)
                 z_std_t = self.z0_std.repeat(b_dim, 1)
@@ -165,6 +165,9 @@ class MultiBDMM(MultiDGTS):
                 z_t = self._sample_gauss(z_mean_t, z_std_t)
             else:
                 z_t = z_mean_t
+        if direction == 'bwd':
+            z_mean.reverse()
+            z_std.reverse()
         z_mean, z_std = torch.stack(z_mean), torch.stack(z_std)
         return z_mean, z_std
 
@@ -234,9 +237,9 @@ class MultiBDMM(MultiDGTS):
         
         return infer, prior, samples
             
-    def sample(self, t_max, b_dim):
+    def sample(self, t_max, b_dim, direction='fwd'):
         """Generates a sequence of the input data by sampling."""
-        z_mean, z_std = self.z_sample(t_max, b_dim, sample=True)
+        z_mean, z_std = self.z_sample(t_max, b_dim, direction, sample=True)
         out_mean, out_std = self.decode(z_mean)
         return out_mean, out_std
         
