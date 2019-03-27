@@ -16,7 +16,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .common import GaussianMLP
+from .common import GaussianMLP, GaussianGTF
 from .dgts import MultiDGTS
 
 class MultiDMM(MultiDGTS):
@@ -80,10 +80,10 @@ class MultiDMM(MultiDGTS):
                 self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
 
         # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
-        self.fwd = GaussianMLP(z_dim, z_dim, h_dim)
+        self.fwd = GaussianGTF(z_dim, h_dim)
 
         # Backward conditional q(z|z_next) = N(mu(z_next), sigma(z_next))
-        self.bwd = GaussianMLP(z_dim, z_dim, h_dim)
+        self.bwd = GaussianGTF(z_dim, h_dim)
 
         # Number of sampling particles in backward pass
         self.n_bwd_particles = n_bwd_particles
