@@ -103,7 +103,7 @@ class MultiDKS(MultiDGTS):
         self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
         self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)        
     
-    def forward(self, inputs, lengths, sample=True):
+    def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         inputs : dict of str : torch.tensor
@@ -114,6 +114,7 @@ class MultiDKS(MultiDGTS):
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
         """
+        lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
         batch_size, seq_len = len(lengths), max(lengths)
 
         # Initialize list accumulators

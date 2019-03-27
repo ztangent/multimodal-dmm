@@ -43,13 +43,13 @@ def train(loader, model, optimizer, epoch, args):
         batch_loss = 0
         for m in args.modalities:
             # Run forward pass with modality m
-            infer, prior, outputs = model({m: data[m]}, lengths)
+            infer, prior, outputs = model({m: data[m]}, lengths=lengths)
             # Compute ELBO loss for modality m
             batch_loss += model.loss({m: data[m]}, infer, prior, outputs, mask,
                                      kld_mult, rec_mults)
         if len(args.modalities) > 1:
             # Run forward pass with all modalities
-            infer, prior, outputs = model(data, lengths)
+            infer, prior, outputs = model(data, lengths=lengths)
             # Compute ELBO loss for all modalities
             batch_loss += model.loss(data, infer, prior, outputs, mask,
                                      kld_mult, rec_mults)
@@ -97,7 +97,7 @@ def evaluate(dataset, model, args, fig_path=None):
             inputs[m][:start_n,:,:] = float('nan')
             inputs[m][stop_n:,:,:] = float('nan')
         # Run forward pass using all modalities, get MAP estimate
-        infer, prior, outputs = model(inputs, lengths, sample=False)
+        infer, prior, outputs = model(inputs, lengths=lengths, sample=False)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
         rec_loss.append(model.rec_loss(data, outputs, mask, args.rec_mults))

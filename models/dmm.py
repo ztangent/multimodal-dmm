@@ -247,7 +247,7 @@ class MultiDMM(MultiDGTS):
         out_mean, out_std = self.decode(z_mean)
         return out_mean, out_std
             
-    def forward(self, inputs, lengths, sample=True):
+    def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         inputs : dict of str : torch.tensor
@@ -258,6 +258,7 @@ class MultiDMM(MultiDGTS):
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
         """
+        lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
         t_max, b_dim = max(lengths), len(lengths)
 
         # Infer z_t from x_t without temporal information
