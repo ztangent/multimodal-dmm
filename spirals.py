@@ -22,7 +22,7 @@ from datasets.spirals import SpiralsDataset
 from datasets.multiseq import seq_collate_dict
 
 import models
-from utils import eval_ccc, anneal
+from utils import eval_ccc, anneal, plot_grad_flow
 
 def train(loader, model, optimizer, epoch, args):
     model.train()
@@ -45,6 +45,11 @@ def train(loader, model, optimizer, epoch, args):
         # Average over number of datapoints before stepping
         b_loss /= sum(lengths)
         b_loss.backward()
+        # Plot gradients
+        if args.gradients:
+            plot_grad_flow(model.named_parameters())
+        # Clip gradients to [-1, 1]
+        clip_grad_value_(model.parameters(), 0.1)
         # Step, then zero gradients
         optimizer.step()
         optimizer.zero_grad()
@@ -124,7 +129,9 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
                 for i in sel_idx]
     sel_rng = [(ranges['spiral-x'][i], ranges['spiral-y'][i])
                for i in sel_idx]
-    
+
+    # Set current figure
+    plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
         true, pred = sel_true[i], sel_pred[i]
         rng, m = sel_rng[i], sel_metric[i]
@@ -347,6 +354,8 @@ if __name__ == "__main__":
                         help='device to use (default: cuda:0 if available)')
     parser.add_argument('--visualize', action='store_true', default=False,
                         help='flag to visualize predictions (default: false)')
+    parser.add_argument('--gradients', action='store_true', default=False,
+                        help='flag to plot gradients (default: false)')
     parser.add_argument('--normalize', type=str, default=[], nargs='+',
                         help='modalities to normalize (default: [])')
     parser.add_argument('--test', action='store_true', default=False,
