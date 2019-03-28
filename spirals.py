@@ -48,8 +48,6 @@ def train(loader, model, optimizer, epoch, args):
         # Plot gradients
         if args.gradients:
             plot_grad_flow(model.named_parameters())
-        # Clip gradients to [-1, 1]
-        clip_grad_value_(model.parameters(), 0.1)
         # Step, then zero gradients
         optimizer.step()
         optimizer.zero_grad()
