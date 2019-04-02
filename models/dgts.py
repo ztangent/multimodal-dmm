@@ -5,6 +5,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -62,18 +63,21 @@ class MultiDGTS(nn.Module):
         sum_std = sum_var.pow(0.5)
         return sum_mean, sum_std
 
-    def step(self, inputs, mask, kld_mult, rec_mults, **kwargs):
+    def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
         """Custom training step for multimodal training paradigm."""
+        # If targets not provided, assume inputs are targets
+        if targets == None:
+            targets = inputs
         loss = 0
         # Compute negative ELBO loss for individual modalities
         for m in self.modalities:
             infer, prior, outputs = self.forward({m : inputs[m]}, **kwargs)
-            loss += self.loss({m : inputs[m]}, infer, prior, outputs, mask,
+            loss += self.loss({m : targets[m]}, infer, prior, outputs, mask,
                               kld_mult, rec_mults)
         # Compute negative ELBO loss for all modalities
         if len(self.modalities) > 1:
             infer, prior, outputs = self.forward(inputs, **kwargs)
-            loss += self.loss(inputs, infer, prior, outputs, mask,
+            loss += self.loss(targets, infer, prior, outputs, mask,
                               kld_mult, rec_mults)
         return loss
         

@@ -18,8 +18,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+from datasets import multiseq as mseq
 from datasets.spirals import SpiralsDataset
-from datasets.multiseq import seq_collate_dict
 
 import models
 from utils import eval_ccc, anneal, plot_grad_flow
@@ -30,17 +30,20 @@ def train(loader, model, optimizer, epoch, args):
     data_num = 0
     log_freq = len(loader) // args.log_freq
     rec_mults = dict(args.rec_mults)
-    for b_num, (data, mask, lengths) in enumerate(loader):
+    for b_num, (targets, mask, lengths) in enumerate(loader):
         # Anneal KLD loss multipliers
         b_tot = b_num + epoch*len(loader)
         kld_mult =\
             anneal(0.0, args.kld_mult, b_tot, args.kld_anneal*len(loader))
         # Send to device
         mask = mask.to(args.device)
-        for m in data.keys():
-            data[m] = data[m].to(args.device)
+        for m in targets.keys():
+            targets[m] = targets[m].to(args.device)
+        # Introduce burst deletions to improve interpolation
+        inputs = mseq.burst_delete(targets, args.burst_frac)
         # Compute batch loss
-        b_loss = model.step(data, mask, kld_mult, rec_mults, lengths=lengths)
+        b_loss = model.step(inputs, mask, kld_mult, rec_mults,
+                            targets=targets, lengths=lengths)
         loss += b_loss
         # Average over number of datapoints before stepping
         b_loss /= sum(lengths)
@@ -70,28 +73,22 @@ def evaluate(dataset, model, args, fig_path=None):
     kld_loss, rec_loss, mse_loss = [], [], []
     for data in dataset:
         # Collate data into batch dictionary of size 1
-        data, mask, lengths = seq_collate_dict([data])
+        targets, mask, lengths = mseq.seq_collate_dict([data])
         # Send to device
         mask = mask.to(args.device)
-        for m in data.keys():
-            data[m] = data[m].to(args.device)
-        # Mask out some data to test for robustness
-        inputs = {m: torch.tensor(data[m]) for m in data.keys()}
-        for m in inputs.keys():
-            # Randomly remove a fraction of observations
-            drop_n = int(args.drop_frac * max(lengths))
-            drop_idx = np.random.choice(max(lengths), drop_n, False)
-            inputs[m][drop_idx,:,:] = float('nan')
-            # Remove init/final fraction of observations to test extrapolation
-            start_n = int(args.start_frac * max(lengths))
-            stop_n = int(args.stop_frac * max(lengths))
-            inputs[m][:start_n,:,:] = float('nan')
-            inputs[m][stop_n:,:,:] = float('nan')
+        for m in targets.keys():
+            targets[m] = targets[m].to(args.device)
+        # Randomly remove a fraction of observations to test robustness
+        inputs = mseq.rand_delete(targets, args.drop_frac)
+        # Remove init/final fraction of observations to test extrapolation
+        t_start = int(args.start_frac * max(lengths))
+        t_stop = int(args.stop_frac * max(lengths))
+        inputs = mseq.keep_segment(inputs, t_start, t_stop)
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, outputs = model(inputs, lengths=lengths, sample=False)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
-        rec_loss.append(model.rec_loss(data, outputs, mask, args.rec_mults))
+        rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
         # Store predictions and confidence intervals
@@ -100,7 +97,7 @@ def evaluate(dataset, model, args, fig_path=None):
             predictions[m].append(out_mean[m].view(-1).cpu().numpy())
             ranges[m].append(1.96 * out_std[m].view(-1).cpu().numpy())
         # Compute mean squared error over time
-        mse = sum([(out_mean[m]-data[m]).pow(2) for m in out_mean.keys()])
+        mse = sum([(out_mean[m]-targets[m]).pow(2) for m in out_mean.keys()])
         mse_loss.append(mse.mean().item())
     # Plot predictions against truth
     if args.visualize:
@@ -284,7 +281,7 @@ def main(args):
     train_data = train_data.split(args.split)
     # Batch data using data loaders
     train_loader = DataLoader(train_data, batch_size=args.batch_size,
-                              shuffle=True, collate_fn=seq_collate_dict,
+                              shuffle=True, collate_fn=mseq.seq_collate_dict,
                               pin_memory=True)
    
     # Train and save best model
@@ -336,6 +333,8 @@ if __name__ == "__main__":
                         help='reconstruction loss multiplier (default: 1/dims')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
+    parser.add_argument('--burst_frac', type=float, default=0.1, metavar='F',
+                        help='burst error rate during training (default: 0.1)')
     parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
                         help='fraction of data to randomly drop at test time')
     parser.add_argument('--start_frac', type=float, default=0.25, metavar='F',

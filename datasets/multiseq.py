@@ -270,3 +270,42 @@ def seq_collate_dict(data, time_first=True):
         mask = mask.permute(1, 0, 2)
     return batch, mask, lengths
 
+def rand_delete(batch_in, del_frac, modalities=None):
+    """Introduce random memoryless errors / deletions into a data batch"""
+    if modalities == None:
+        modalities = batch_in.keys()
+    batch_out = dict()
+    for m in modalities:
+        batch_out[m] = torch.tensor(batch_in[m])
+        t_max, b_dim = batch_in[m].shape[:2]
+        del_idx = np.random.choice(t_max, int(del_frac * t_max), False)
+        batch_out[m][del_idx,:,:] = float('nan')
+    return batch_out
+
+def burst_delete(batch_in, burst_frac, modalities=None):
+    """Introduce random burst errors / deletions into a data batch"""
+    if modalities == None:
+        modalities = batch_in.keys()
+    batch_out = dict()
+    for m in modalities:
+        batch_out[m] = torch.tensor(batch_in[m])
+        t_max, b_dim = batch_in[m].shape[:2]
+        burst_len = int(burst_frac * t_max)
+        for b in range(b_dim):
+            t_start = np.random.randint(t_max)
+            t_stop = min(t_start + burst_len, t_max)
+            batch_out[m][t_start:t_stop, b, :] = float('nan')
+    return batch_out
+
+def keep_segment(batch_in, t_start, t_stop, modalities=None):
+    """Delete all data outside of specified time segment [t_start, t_stop)."""
+    if modalities == None:
+        modalities = batch_in.keys()
+    batch_out = dict()
+    for m in modalities:
+        batch_out[m] = torch.tensor(batch_in[m])
+        t_max = batch_in[m].shape[0]
+        batch_out[m][range(0,t_start) + range(t_stop,t_max),:,:] = float('nan')
+    return batch_out
+    
+        
