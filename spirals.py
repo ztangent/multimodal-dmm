@@ -195,9 +195,9 @@ def load_data(modalities, args):
 
 def main(args):
     # Fix random seed
-    torch.manual_seed(1)
-    torch.cuda.manual_seed(1)
-    np.random.seed(1)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
     # Convert device string to torch.device
     args.device = (torch.device(args.device) if torch.cuda.is_available()
@@ -325,8 +325,10 @@ if __name__ == "__main__":
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
                         help='learning rate (default: 1e-4)')
-    parser.add_argument('--base_rate', type=float, default=1.0, metavar='N',
+    parser.add_argument('--base_rate', type=float, default=1.0, metavar='R',
                         help='sampling rate to resample to (default: 1.0)')
+    parser.add_argument('--seed', type=int, default=1, metavar='N',
+                        help='random seed (default: 1)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
                         help='max kld loss multiplier (default: 1.0)')
     parser.add_argument('--rec_mults', type=float, default=None, nargs='+',

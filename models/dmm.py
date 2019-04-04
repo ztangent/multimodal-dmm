@@ -39,9 +39,9 @@ class MultiDMM(MultiDGTS):
         z_dim : int
             number of latent dimensions
         z0_mean : float
-            mean of initial latent prior
+            mean of global latent prior
         z0_std : float
-            standard deviation of initial latent prior
+            standard deviation of global latent prior
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
@@ -87,23 +87,26 @@ class MultiDMM(MultiDGTS):
 
         # Number of sampling particles in backward pass
         self.n_bwd_particles = n_bwd_particles
+
+        # Initial prior
+        self.z0_mean = nn.Parameter(z0_mean * torch.ones(1, z_dim))
+        self.z0_log_std = nn.Parameter((z0_std * torch.ones(1, z_dim)).log())
         
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
         self.to(self.device)
 
-        # Initial prior
-        self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
-        self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)        
-
-    def encode(self, inputs):
+    def encode(self, inputs, combine=False):
         """Encode (optionally missing) inputs to latent space.
 
         inputs : dict of str : torch.tensor
            keys are modality names, tensors are (T, B, D)
            for max sequence length T, batch size B and input dims D
            NOTE: should have at least one modality present
+        combine : bool
+           if true, combines inferred Gaussian distributions using
+           the product of experts formula
         """
         t_max, b_dim = inputs[inputs.keys()[0]].shape[:2]
         
@@ -127,17 +130,18 @@ class MultiDMM(MultiDGTS):
             z_std.append(z_std_m)
             masks.append(mask_m)
 
-        # Combine the Gaussian parameters using PoE
         z_mean = torch.stack(z_mean, dim=0)
         z_std = torch.stack(z_std, dim=0)
         masks = torch.stack(masks, dim=0)
-        z_mean, z_std = \
-            self.product_of_experts(z_mean, z_std, masks)
+        
+        if combine:
+            # Combine the Gaussian parameters using PoE
+            z_mean, z_std = \
+                self.product_of_experts(z_mean, z_std, masks)
+            # Compute OR of masks across modalities
+            masks = masks.any(dim=0)
 
-        # Compute OR of masks across modalities
-        mask = masks.any(dim=0)
-
-        return z_mean, z_std, mask
+        return z_mean, z_std, masks
 
     def decode(self, z):
         """Decode from latent space to inputs.
@@ -162,7 +166,7 @@ class MultiDMM(MultiDGTS):
                 z_mean_t, z_std_t = self.fwd(z_t)
             else:
                 z_mean_t = self.z0_mean.repeat(b_dim, 1)
-                z_std_t = self.z0_std.repeat(b_dim, 1)
+                z_std_t = self.z0_log_std.exp().repeat(b_dim, 1)
             z_mean.append(z_mean_t)
             z_std.append(z_std_t)
             if sample:
@@ -176,14 +180,30 @@ class MultiDMM(MultiDGTS):
                  direction='fwd', sample=True, n_particles=1):
         """Performs filtering on the latent variables by combining
         the prior distributions with inferred distributions
-        at each time step."""
+        at each time step using a product of Gaussian experts.
+
+        z_mean : torch.tensor
+            (M, T, B, D) for M experts, T steps, batch size B, D latent dims
+        z_std : torch.tensor
+            (M, T, B, D) for M experts, T steps, batch size B, D latent dims
+        z_masks : torch.tensor
+            (M, T, B) for M experts, T steps, batch size B
+        init_mask : int
+            mask for initial time step
+        direction : str
+            'fwd' or 'bwd' filtering
+        sample : bool
+            sample at each timestep if true, use the mean otherwise
+        n_particles : int
+            number of filtering particles
+        """
         t_max, b_dim = z_mean[0].shape[:2]
         
         # Initialize list accumulators
         prior_mean, prior_std = [], []
         infer_mean, infer_std = [], []
         samples = []
-
+        
         # Reverse inputs in time if direction is backward
         rv = ( (lambda x : list(reversed(x))) if direction == 'bwd'
                else (lambda x : x) )
@@ -195,8 +215,13 @@ class MultiDMM(MultiDGTS):
             if len(samples) == 0:
                 # Use default prior
                 prior_mean_t = self.z0_mean.repeat(b_dim, 1)
-                prior_std_t = self.z0_std.repeat(b_dim, 1)
+                prior_std_t = self.z0_log_std.exp().repeat(b_dim, 1)
                 prior_mask_t = init_mask * prior_mask_t
+            elif n_particles == 1:
+                if direction == 'fwd':
+                    prior_mean_t, prior_std_t = self.fwd(z_particles[0])
+                else: 
+                    prior_mean_t, prior_std_t = self.bwd(z_particles[0])
             else:
                 # Compute params for each particle, then average
                 if direction == 'fwd':
@@ -212,16 +237,13 @@ class MultiDMM(MultiDGTS):
             prior_std.append(prior_std_t)
 
             # Concatenate means and standard deviations
-            z_mean_t = [prior_mean_t] + [m[t] for m in z_mean]
-            z_std_t = [prior_std_t] + [s[t] for s in z_std]
-            masks = [prior_mask_t] + [m[t] for m in z_masks]
-
+            z_mean_t = torch.cat([prior_mean_t.unsqueeze(0), z_mean[:,t]], 0)
+            z_std_t = torch.cat([prior_std_t.unsqueeze(0), z_std[:,t]], 0)
+            masks = torch.cat([prior_mask_t.unsqueeze(0), z_masks[:,t]], 0)
+            
             # Combine distributions using product of experts
-            z_mean_t = torch.stack(z_mean_t, dim=0)
-            z_std_t = torch.stack(z_std_t, dim=0)
-            mask = torch.stack(masks, dim=0)
             infer_mean_t, infer_std_t = \
-                self.product_of_experts(z_mean_t, z_std_t, mask)
+                self.product_of_experts(z_mean_t, z_std_t, masks)
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
 
@@ -261,32 +283,35 @@ class MultiDMM(MultiDGTS):
         lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
         t_max, b_dim = max(lengths), len(lengths)
 
+        # Setup global (i.e. time-invariant) prior on z
+        z_glb_mean = self.z0_mean.repeat(t_max, b_dim, 1)
+        z_glb_std = self.z0_log_std.exp().repeat(t_max, b_dim, 1)
+        z_glb_mask =\
+            torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
+        
         # Infer z_t from x_t without temporal information
         z_obs_mean, z_obs_std, z_obs_mask = self.encode(inputs)
         
-        # Forward pass to sample from p(z_t) for all timesteps
-        z_fwd_mean, z_fwd_std = self.z_sample(t_max, b_dim, sample)
-        z_fwd_mask =\
-            torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
-
-        # Backward pass to approximate p(z_t|x_t, ..., x_T)
-        _, (z_bwd_mean, z_bwd_std),  _ = \
-            self.z_filter([z_fwd_mean, z_obs_mean], [z_fwd_std, z_obs_std],
-                          [z_fwd_mask, z_obs_mask], init_mask=0,
-                          direction='bwd', sample=sample,
+        # Backward filtering pass to approximate p(z_t|x_t, ..., x_T)
+        _, (z_flt_mean, z_flt_std),  _ = \
+            self.z_filter(torch.cat([z_glb_mean.unsqueeze(0), z_obs_mean], 0),
+                          torch.cat([z_glb_std.unsqueeze(0), z_obs_std], 0),
+                          torch.cat([z_glb_mask.unsqueeze(0), z_obs_mask], 0),
+                          init_mask=0, direction='bwd', sample=sample,
                           n_particles=self.n_bwd_particles)
-        z_bwd_mask =\
+        z_flt_mask =\
             torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
-        z_bwd_mask[-1] = 0 * z_bwd_mask[-1]
+        z_flt_mask[-1] = 0 * z_flt_mask[-1]
             
-        # Final forward pass to infer p(z_1:T|x_1:T)
-        infer, prior, z_samples = \
-            self.z_filter([z_bwd_mean, z_obs_mean], [z_bwd_std, z_obs_std],
-                          [z_bwd_mask, z_obs_mask], init_mask=1,
-                          direction='fwd', sample=sample)
+        # Forward smoothing pass to infer p(z_1:T|x_1:T)
+        infer, prior, samples = \
+            self.z_filter(torch.cat([z_flt_mean.unsqueeze(0), z_obs_mean], 0),
+                          torch.cat([z_flt_std.unsqueeze(0), z_obs_std], 0),
+                          torch.cat([z_flt_mask.unsqueeze(0), z_obs_mask], 0),
+                          init_mask=1, direction='fwd', sample=sample)
 
         # Decode sampled z to reconstruct inputs
-        out_mean, out_std = self.decode(z_samples)
+        out_mean, out_std = self.decode(samples)
         outputs = (out_mean, out_std)
 
         return infer, prior, outputs
