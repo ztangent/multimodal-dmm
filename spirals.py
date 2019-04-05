@@ -5,7 +5,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import sys, os, shutil
-import argparse
+import argparse, yaml
 
 import pandas as pd
 import numpy as np
@@ -43,7 +43,8 @@ def train(loader, model, optimizer, epoch, args):
         inputs = mseq.burst_delete(targets, args.burst_frac)
         # Compute batch loss
         b_loss = model.step(inputs, mask, kld_mult, rec_mults,
-                            targets=targets, lengths=lengths)
+                            targets=targets, lengths=lengths,
+                            **args.model_args)
         loss += b_loss
         # Average over number of datapoints before stepping
         b_loss /= sum(lengths)
@@ -85,7 +86,8 @@ def evaluate(dataset, model, args, fig_path=None):
         t_stop = int(args.stop_frac * max(lengths))
         inputs = mseq.keep_segment(inputs, t_start, t_stop)
         # Run forward pass using all modalities, get MAP estimate
-        infer, prior, outputs = model(inputs, lengths=lengths, sample=False)
+        infer, prior, outputs = model(inputs, lengths=lengths, sample=False,
+                                      **args.model_args)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
         rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
@@ -315,6 +317,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='MultiVRNN', metavar='S',
                         help='name of model to train (default: MultiVRNN)')
+    parser.add_argument('--model_args', type=yaml.load, default=dict(),
+                        help='additional model arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
     parser.add_argument('--batch_size', type=int, default=100, metavar='N',
