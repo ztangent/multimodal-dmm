@@ -24,8 +24,9 @@ class GaussianMLP(nn.Module):
 
 class GaussianGTF(nn.Module):
     """GRU-like latent space gated transition function (GTF)."""
-    def __init__(self, z_dim, h_dim):
+    def __init__(self, z_dim, h_dim, min_std=0):
         super(GaussianGTF, self).__init__()
+        self.min_std = min_std
         self.z_to_gate = nn.Sequential(
             nn.Linear(z_dim, h_dim),
             nn.ReLU(),
@@ -44,6 +45,6 @@ class GaussianGTF(nn.Module):
         gate = self.z_to_gate(z)
         z_lin = self.z_lin(z)
         z_nonlin = self.z_nonlin(z)
-        z_std = self.z_to_std(z_nonlin)
+        z_std = self.z_to_std(z_nonlin) + self.min_std
         z_mean = (1-gate) * z_lin + gate * z_nonlin
         return z_mean, z_std

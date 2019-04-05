@@ -296,13 +296,31 @@ class MultiBDMM(MultiDGTS):
 
     def step(self, inputs, mask, kld_mult, rec_mults, **kwargs):
         """Custom training step for bidirectional training paradigm."""
+        modes = ['fsmooth', 'bsmooth']
         loss = 0
-        # Compute loss when forward filtering
-        loss += super(MultiBDMM, self).step(inputs, mask, kld_mult, rec_mults,
-                                            mode='fsmooth', **kwargs)
-        # Compute loss when backward filtering
-        loss += super(MultiBDMM, self).step(inputs, mask, kld_mult, rec_mults,
-                                            mode='bsmooth', **kwargs)
+        # Compute negative ELBO loss for individual modalities
+        for m in self.modalities:
+            infer, prior, outputs = {}, {}, {}
+            # Compute for both directions
+            for mode in modes:
+                infer[mode], prior[mode], outputs[mode] =\
+                    self.forward({m : inputs[m]}, mode=mode, **kwargs)
+                loss += self.loss({m : inputs[m]}, infer[mode], prior[mode],
+                                  outputs[mode], mask, kld_mult, rec_mults)
+            # Add JS divergence between forward and backward latents
+            loss += (self.kld_loss(infer[mode], infer[mode], mask) +
+                     self.kld_loss(infer[mode], infer[mode], mask))/2
+        # Compute negative ELBO loss for all modalities
+        if len(self.modalities) > 1:
+            # Compute for both directions
+            for mode in modes:
+                infer[mode], prior[mode], outputs[mode] =\
+                    self.forward(inputs, mode=mode, **kwargs)
+                loss += self.loss(inputs, infer[mode], prior[mode],
+                                  outputs[mode], mask, kld_mult, rec_mults)
+            # Add JS divergence between forward and backward latents
+            loss += (self.kld_loss(infer[mode], infer[mode], mask) +
+                     self.kld_loss(infer[mode], infer[mode], mask))/2
         return loss
 
 if __name__ == "__main__":
