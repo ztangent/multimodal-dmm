@@ -22,7 +22,7 @@ from .dgts import MultiDGTS
 class MultiBDMM(MultiDGTS):
     def __init__(self, modalities, dims, encoders=None, decoders=None,
                  h_dim=32, z_dim=32, z0_mean=0.0, z0_std=1.0, min_std=1e-3,
-                 device=torch.device('cuda:0')):
+                 learn_glb_prior=True, device=torch.device('cuda:0')):
         """
         Construct multimodal bidirectional deep Markov model.
 
@@ -88,6 +88,9 @@ class MultiBDMM(MultiDGTS):
         self.z0_mean = nn.Parameter(z0_mean * torch.ones(1, z_dim))
         self.z0_log_std = nn.Parameter((z0_std * torch.ones(1, z_dim)).log())
         self.min_std = min_std
+        if not learn_glb_prior:
+            self.z0_mean.requires_grad = False
+            self.z0_log_std.requires_grad = False
         
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
@@ -284,8 +287,10 @@ class MultiBDMM(MultiDGTS):
            whether to sample from z_t (default) or return MAP estimate
         """
         lengths = kwargs.get('lengths')
-        sample = kwargs.get('sample', True)
         mode = kwargs.get('mode', 'fsmooth')
+        sample = kwargs.get('sample', True)
+        flt_particles = kwargs.get('flt_particles', 1)
+        smt_particles = kwargs.get('smt_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
         
         # Setup global (i.e. time-invariant) prior on z
@@ -302,7 +307,8 @@ class MultiBDMM(MultiDGTS):
         infer, prior, z_samples = \
             self.z_filter(cons(glb_mean, obs_mean), cons(glb_std, obs_std),
                           cons(glb_mask, obs_mask), init_mask=0,
-                          direction=direction, sample=sample)
+                          direction=direction, sample=sample,
+                          n_particles=flt_particles)
 
         # Smoothing pass
         if mode in ['fsmooth', 'bsmooth']:
@@ -314,7 +320,8 @@ class MultiBDMM(MultiDGTS):
                 self.z_filter(cons(glb_mean, cons(flt_mean, obs_mean)),
                               cons(glb_std, cons(flt_std, obs_std)),
                               cons(glb_mask, cons(flt_mask, obs_mask)),
-                              init_mask=1, direction=direction, sample=sample)
+                              init_mask=1, direction=direction, sample=sample,
+                              n_particles=smt_particles)
 
         # Decode sampled z to reconstruct inputs
         out_mean, out_std = self.decode(z_samples)
@@ -322,6 +329,36 @@ class MultiBDMM(MultiDGTS):
 
         return infer, prior, outputs
 
+    def kld_prior(self, n_particles, direction='fwd'):
+        """Compute KL divergence between E[p(z_next|z)] and p(z)."""
+        cur_mean, cur_std, _ = self.prior((n_particles, 1))
+        samples = self._sample_gauss(cur_mean, cur_std)
+        nxt_mean, nxt_std = self.trans[direction](samples)
+        nxt_mean, nxt_std = self.mean_of_experts(nxt_mean, nxt_std)
+        cur_mean, cur_std, _ = self.prior((1, 1))
+        loss = self._kld_gauss(cur_mean, cur_std, nxt_mean, nxt_std)
+        return loss
+    
+    def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
+        """Custom training step for bidirectional training paradigm."""
+        # Set up arguments
+        f_mode = kwargs.get('f_mode', 'bfilt')
+        s_mode = kwargs.get('s_mode', 'fsmooth')
+        f_mult, s_mult = kwargs.get('f_mult', 0.5), kwargs.get('s_mult', 0.5)
+        t_max, b_dim = mask.shape[:2]
+        
+        loss = 0
+        # Compute prior matching loss
+        loss += kld_mult * t_max * self.kld_prior(b_dim, 'fwd')
+        loss += kld_mult * t_max * self.kld_prior(b_dim, 'bwd')
+        # Compute loss when backward filtering
+        loss += f_mult * super(MultiBDMM, self).\
+            step(inputs, mask, kld_mult, rec_mults, mode=f_mode, **kwargs)
+        # Compute loss when forward smoothing
+        loss += s_mult * super(MultiBDMM, self).\
+            step(inputs, mask, kld_mult, rec_mults, mode=s_mode, **kwargs)
+        return loss
+    
 if __name__ == "__main__":
     # Test code by running 'python -m models.bdmm' from base directory
     import os, sys, argparse
