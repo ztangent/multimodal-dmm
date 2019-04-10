@@ -22,7 +22,7 @@ from .dgts import MultiDGTS
 class MultiDMM(MultiDGTS):
     def __init__(self, modalities, dims, encoders=None, decoders=None,
                  h_dim=32, z_dim=32, z0_mean=0.0, z0_std=1.0, min_std=1e-3,
-                 n_bwd_particles=1, device=torch.device('cuda:0')):
+                 bwd_particles=1, device=torch.device('cuda:0')):
         """
         Construct multimodal deep Markov model.
 
@@ -79,14 +79,15 @@ class MultiDMM(MultiDGTS):
             for m in self.modalities:
                 self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
 
-        # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
+        # Forward transition p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         self.fwd = GaussianGTF(z_dim, h_dim, min_std=1e-3)
 
-        # Backward conditional q(z|z_next) = N(mu(z_next), sigma(z_next))
+        # Backwards transition q'(z|z_next) = N(mu(z_next), sigma(z_next))
+        # Where p(z|z_next) = q'(z|z_next) * p(z)
         self.bwd = GaussianGTF(z_dim, h_dim, min_std=1e-3)
 
-        # Number of sampling particles in backward pass
-        self.n_bwd_particles = n_bwd_particles
+        # Default number of sampling particles in backward pass
+        self.bwd_particles = bwd_particles
 
         # Global prior on latent space
         self.z0_mean = nn.Parameter(z0_mean * torch.ones(1, z_dim))
@@ -226,7 +227,7 @@ class MultiDMM(MultiDGTS):
                 prior_mean_t, prior_std_t, _ = self.prior((b_dim, 1))
                 prior_mask_t = init_mask * prior_mask_t
             elif n_particles == 1:
-                prior_mean_t, prior_std_t = trans_f(z_ps[0])
+                prior_mean_t, prior_std_t = trans_f(z_particles[0])
             else:
                 # Compute params for each particle, then average
                 prior_t = trans_f(z_particles.view(-1, self.z_dim))
@@ -283,6 +284,8 @@ class MultiDMM(MultiDGTS):
            whether to sample from z_t (default) or return MAP estimate
         """
         lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
+        bwd_particles = kwargs.get('bwd_particles', self.bwd_particles)
+        fwd_particles = kwargs.get('fwd_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
 
         # Setup global (i.e. time-invariant) prior on z
@@ -300,7 +303,7 @@ class MultiDMM(MultiDGTS):
                           cons(z_glb_std, z_obs_std),
                           cons(z_glb_mask, z_obs_mask),
                           init_mask=0, direction='bwd', sample=sample,
-                          n_particles=self.n_bwd_particles)
+                          n_particles=bwd_particles)
         z_flt_mask = torch.tensor(z_glb_mask)
         z_flt_mask[-1] = 0 * z_flt_mask[-1]
             
@@ -309,7 +312,8 @@ class MultiDMM(MultiDGTS):
             self.z_filter(cons(z_flt_mean, z_obs_mean),
                           cons(z_flt_std, z_obs_std),
                           cons(z_flt_mask, z_obs_mask),
-                          init_mask=1, direction='fwd', sample=sample)
+                          init_mask=1, direction='fwd', sample=sample,
+                          n_particles=fwd_particles)
 
         # Decode sampled z to reconstruct inputs
         out_mean, out_std = self.decode(samples)
