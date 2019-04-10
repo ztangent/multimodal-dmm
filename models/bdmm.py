@@ -52,7 +52,8 @@ class MultiBDMM(MultiDGTS):
         self.h_dim = h_dim
         self.z_dim = z_dim
             
-        # Encoders for each modality p(z|x) = N(mu(x), sigma(x))
+        # Encoders for each modality q'(z|x) = N(mu(x), sigma(x))
+        # Where q'(z|x) = p(z|x) / p(z) 
         self.enc = nn.ModuleDict()            
         if encoders is not None:
             # Use custom encoders if provided
@@ -67,7 +68,7 @@ class MultiBDMM(MultiDGTS):
                     nn.ReLU(),
                     GaussianMLP(h_dim, z_dim, h_dim))
 
-        # Decoders for each modality p(xi|z) = N(mu(z), sigma(z))
+        # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
         if decoders is not None:
             # Use custom decoders if provided
@@ -79,7 +80,8 @@ class MultiBDMM(MultiDGTS):
             for m in self.modalities:
                 self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
 
-        # Latent state transitions p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
+        # State transitions q'(z|z_prev) = N(mu(z_prev), sigma(z_prev))
+        # Where q'(z|z_prev) = p(z|z_prev) / p(z) 
         self.trans = nn.ModuleDict()
         self.trans['fwd'] = GaussianGTF(z_dim, h_dim, min_std=min_std)
         self.trans['bwd'] = GaussianGTF(z_dim, h_dim, min_std=min_std)
@@ -154,8 +156,7 @@ class MultiBDMM(MultiDGTS):
         """Decode from latent space to inputs.
 
         z : torch.tensor
-           tensor of shape (T, B, D) for max sequence length T, batch size B
-           and latent dims D 
+           shape is (T, B, D) for T timesteps, B batch dims, D latent dims
         """
         t_max, b_dim = z.shape[:2]
         out_mean, out_std = dict(), dict()        
@@ -165,28 +166,76 @@ class MultiBDMM(MultiDGTS):
             out_std[m] = out_std_m.reshape(t_max, b_dim, -1)
         return out_mean, out_std
 
-    def z_sample(self, t_max, b_dim, direction='fwd', sample=True):
+    def z_next(self, z, direction='fwd', glb_prior=None):
+        """Compute p(z_next|z) given z
+
+        z : torch.tensor
+           shape is (K, B, D) for K particles, B batch dims, D latent dims
+        direction : 'fwd' or 'bwd'
+           which direction to compute
+        glb_prior : (torch.tensor, torch.tensor)
+           optionally provide prior parameters to reuse
+        """
+
+        if glb_prior is None:
+            glb_mean, glb_std, _ = self.prior(z.shape[1:])
+        else:
+            glb_mean, glb_std = glb_prior
+        
+        if z.shape[0] == 1:
+            # Compute p(z|z_prev) = p(z) * q'(z|z_prev)
+            q_mean_t, q_std_t = self.trans[direction](z[0])
+            z_mean_t = torch.stack([glb_mean, q_mean_t])
+            z_std_t = torch.stack([glb_std, q_std_t])
+            z_mean_t, z_std_t = self.product_of_experts(z_mean_t, z_std_t)
+            
+            return z_mean_t, z_std_t
+
+        # Compute p(z|z_prev) for each particle
+        q_mean_t, q_std_t = self.trans[direction](z.view(-1, self.z_dim))
+        z_mean_t = torch.stack([glb_mean.repeat(z.shape[0], 1), q_mean_t])
+        z_std_t = torch.stack([glb_std.repeat(z.shape[0], 1), q_std_t])
+        z_mean_t, z_std_t = self.product_of_experts(z_mean_t, z_std_t)
+
+        # Reshape and average across particles
+        z_mean_t, z_std_t = z_mean_t.view(*z.shape), z_std_t.view(*z.shape)
+        z_mean_t, z_std_t = self.mean_of_experts(z_mean_t, z_std_t)
+
+        return z_mean_t, z_std_t
+        
+    def z_sample(self, t_max, b_dim, direction='fwd',
+                 sample=True, n_particles=1):
         """Generates a sequence of latent variables."""
+        glb_mean, glb_std, _ = self.prior((b_dim, 1))
         z_mean, z_std = [], []
+
         for t in range(t_max):
-            if t > 0:
-                z_mean_t, z_std_t = self.trans[direction](z_t)
+            # Compute parameters for next time step
+            if t == 0:
+                z_mean_t, z_std_t = glb_mean, glb_std
             else:
-                z_mean_t, z_std_t, _ = self.prior((b_dim, 1))
+                z_mean_t, z_std_t =\
+                    self.z_next(z_t, direction, (glb_mean, glb_std))
             z_mean.append(z_mean_t)
             z_std.append(z_std_t)
-            if sample:
-                z_t = self._sample_gauss(z_mean_t, z_std_t)
+
+            # Sample particles from next time step
+            if sample or n_particles > 1:
+                z_t = self._sample_gauss(
+                    z_mean_t.expand(n_particles, -1, -1),
+                    z_std_t.expand(n_particles, -1, -1))
             else:
-                z_t = z_mean_t
+                z_t = z_mean_t.unsqueeze(0)
+
         if direction == 'bwd':
             z_mean.reverse()
             z_std.reverse()
         z_mean, z_std = torch.stack(z_mean), torch.stack(z_std)
+
         return z_mean, z_std
 
-    def z_filter(self, z_mean, z_std, z_masks, init_mask=1,
-                 direction='fwd', sample=True, n_particles=1):
+    def z_filter(self, z_mean, z_std, z_masks, direction='fwd',
+                 sample=True, n_particles=1):
         """Performs filtering on the latent variables by combining
         the prior distributions with inferred distributions
         at each time step using a product of Gaussian experts.
@@ -197,8 +246,6 @@ class MultiBDMM(MultiDGTS):
             (M, T, B, D) for M experts, T steps, batch size B, D latent dims
         z_masks : torch.tensor
             (M, T, B) for M experts, T steps, batch size B
-        init_mask : int
-            mask for initial time step
         direction : str
             'fwd' or 'bwd' filtering
         sample : bool
@@ -216,26 +263,20 @@ class MultiBDMM(MultiDGTS):
         # Reverse inputs in time if direction is backward
         rv = ( (lambda x : list(reversed(x))) if direction == 'bwd'
                else (lambda x : x) )
-        # Set whether to use forward or backward transition
-        trans_f = self.trans[direction]
+        
+        # Setup global (i.e. time-invariant) prior on z
+        glb_mean, glb_std, _ = self.prior((b_dim, 1))
         
         for t in rv(range(t_max)):
-            # Compute prior p(z|z_prev) at time t
             prior_mask_t =\
                 torch.ones((b_dim,), dtype=torch.uint8).to(self.device)
             if len(samples) == 0:
-                # Use default prior
-                prior_mean_t, prior_std_t, _ = self.prior((b_dim, 1))
-                prior_mask_t = init_mask * prior_mask_t
-            elif n_particles == 1:
-                prior_mean_t, prior_std_t = trans_f(z_particles[0])
+                # Use global prior p(z) at t = 0 or t = t_max
+                prior_mean_t, prior_std_t = glb_mean, glb_std
             else:
-                # Compute params for each particle, then average
-                prior_t = trans_f(z_particles.view(-1, self.z_dim))
-                prior_mean_t = prior_t[0].view(n_particles, -1, self.z_dim)
-                prior_std_t = prior_t[1].view(n_particles, -1, self.z_dim)
+                # Compute prior p(z|z_prev) at time t
                 prior_mean_t, prior_std_t =\
-                    self.mean_of_experts(prior_mean_t, prior_std_t)
+                    self.z_next(z_t, direction, (glb_mean, glb_std))
             prior_mean.append(prior_mean_t)
             prior_std.append(prior_std_t)
 
@@ -252,12 +293,12 @@ class MultiBDMM(MultiDGTS):
 
             # Sample particles from inferred distribution
             if sample or n_particles > 1:
-                z_particles = self._sample_gauss(
-                    infer_mean_t.expand(n_particles,-1,-1),
-                    infer_std_t.expand(n_particles,-1,-1))
-                samples.append(z_particles.mean(dim=0))
+                z_t = self._sample_gauss(
+                    infer_mean_t.expand(n_particles, -1, -1),
+                    infer_std_t.expand(n_particles, -1, -1))
+                samples.append(z_t.mean(dim=0))
             else:
-                z_particles = infer_mean_t.unsqueeze(0)
+                z_t = infer_mean_t.unsqueeze(0)
                 samples.append(infer_mean_t)
 
         # Concatenate outputs to tensor, reversing if necessary
@@ -292,36 +333,30 @@ class MultiBDMM(MultiDGTS):
         flt_particles = kwargs.get('flt_particles', 1)
         smt_particles = kwargs.get('smt_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
-        
-        # Setup global (i.e. time-invariant) prior on z
-        glb_mean, glb_std, glb_mask = self.prior((t_max, b_dim, 1))
-        
-        # Infer z_t from x_t without temporal information
-        obs_mean, obs_std, obs_mask = self.encode(inputs)
 
         # Define helper function to prepend tensors
         cons = lambda x, y : torch.cat([x.unsqueeze(0), y], dim=0)
         
+        # Infer z_t from x_t without temporal information
+        obs_mean, obs_std, obs_mask = self.encode(inputs)
+        
         # Filtering pass
         direction = 'fwd' if mode in ['ffilt', 'bsmooth'] else 'bwd'
         infer, prior, z_samples = \
-            self.z_filter(cons(glb_mean, obs_mean), cons(glb_std, obs_std),
-                          cons(glb_mask, obs_mask), init_mask=0,
-                          direction=direction, sample=sample,
-                          n_particles=flt_particles)
+            self.z_filter(obs_mean, obs_std, obs_mask, direction=direction,
+                          sample=sample, n_particles=flt_particles)
 
         # Smoothing pass
         if mode in ['fsmooth', 'bsmooth']:
             direction = 'fwd' if mode == 'fsmooth' else 'bwd'
             flt_mean, flt_std = prior
-            flt_mask = torch.tensor(glb_mask)
+            flt_mask =\
+                torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
             flt_mask[-1] = 0 * flt_mask[-1]
             infer, prior, z_samples = \
-                self.z_filter(cons(glb_mean, cons(flt_mean, obs_mean)),
-                              cons(glb_std, cons(flt_std, obs_std)),
-                              cons(glb_mask, cons(flt_mask, obs_mask)),
-                              init_mask=1, direction=direction, sample=sample,
-                              n_particles=smt_particles)
+                self.z_filter(cons(flt_mean, obs_mean), cons(flt_std, obs_std),
+                              cons(flt_mask, obs_mask), direction=direction,
+                              sample=sample, n_particles=smt_particles)
 
         # Decode sampled z to reconstruct inputs
         out_mean, out_std = self.decode(z_samples)
@@ -329,14 +364,12 @@ class MultiBDMM(MultiDGTS):
 
         return infer, prior, outputs
 
-    def kld_prior(self, n_particles, direction='fwd'):
+    def kld_prior(self, t_max, n_particles, direction='fwd'):
         """Compute KL divergence between E[p(z_next|z)] and p(z)."""
-        cur_mean, cur_std, _ = self.prior((n_particles, 1))
-        samples = self._sample_gauss(cur_mean, cur_std)
-        nxt_mean, nxt_std = self.trans[direction](samples)
-        nxt_mean, nxt_std = self.mean_of_experts(nxt_mean, nxt_std)
-        cur_mean, cur_std, _ = self.prior((1, 1))
-        loss = self._kld_gauss(cur_mean, cur_std, nxt_mean, nxt_std)
+        glb_mean, glb_std, _ = self.prior((t_max, 1))
+        nxt_mean, nxt_std =\
+            self.z_sample(t_max, 1, direction, n_particles=n_particles)
+        loss = self._kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
         return loss
     
     def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
@@ -345,18 +378,21 @@ class MultiBDMM(MultiDGTS):
         f_mode = kwargs.get('f_mode', 'bfilt')
         s_mode = kwargs.get('s_mode', 'fsmooth')
         f_mult, s_mult = kwargs.get('f_mult', 0.5), kwargs.get('s_mult', 0.5)
+        train_particles = kwargs.get('train_particles', 25)
         t_max, b_dim = mask.shape[:2]
         
         loss = 0
         # Compute prior matching loss
-        loss += kld_mult * t_max * self.kld_prior(b_dim, 'fwd')
-        loss += kld_mult * t_max * self.kld_prior(b_dim, 'bwd')
+        if kwargs.get('match_priors', False):
+            loss += kld_mult * b_dim * self.kld_prior(t_max, b_dim, 'fwd')
+            loss += kld_mult * b_dim * self.kld_prior(t_max, b_dim, 'bwd')
         # Compute loss when backward filtering
         loss += f_mult * super(MultiBDMM, self).\
             step(inputs, mask, kld_mult, rec_mults, mode=f_mode, **kwargs)
         # Compute loss when forward smoothing
         loss += s_mult * super(MultiBDMM, self).\
-            step(inputs, mask, kld_mult, rec_mults, mode=s_mode, **kwargs)
+            step(inputs, mask, kld_mult, rec_mults, mode=s_mode,
+                 flt_particles=train_particles, **kwargs)
         return loss
     
 if __name__ == "__main__":
