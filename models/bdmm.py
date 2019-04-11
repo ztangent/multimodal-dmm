@@ -42,6 +42,8 @@ class MultiBDMM(MultiDGTS):
             mean of global latent prior
         z0_std : float
             standard deviation of global latent prior
+        min_std : float
+            minimum std to ensure stable training
         device : torch.device
             device on which this module is stored (CPU or GPU)
         """
@@ -90,9 +92,6 @@ class MultiBDMM(MultiDGTS):
         self.z0_mean = nn.Parameter(z0_mean * torch.ones(1, z_dim))
         self.z0_log_std = nn.Parameter((z0_std * torch.ones(1, z_dim)).log())
         self.min_std = min_std
-        if not learn_glb_prior:
-            self.z0_mean.requires_grad = False
-            self.z0_log_std.requires_grad = False
         
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
@@ -204,28 +203,47 @@ class MultiBDMM(MultiDGTS):
         return z_mean_t, z_std_t
         
     def z_sample(self, t_max, b_dim, direction='fwd',
-                 sample=True, n_particles=1):
-        """Generates a sequence of latent variables."""
+                 sample=True, n_particles=1, z_init=None, inclusive=False):
+        """Generates a sequence of latent variables.
+
+        t_max : int
+            number of timesteps to sample
+        b_dim : int
+            batch size
+        direction : 'fwd' or 'bwd'
+            whether to sample forwards or backwards in time
+        sample : bool
+            whether to sample (default) or to use MAP estimate
+        n_particles : int
+            number of sampling particles, overrides sample flag if > 1
+        z_init : (torch.tensor, torch.tensor)
+            (mean, std) of initial latent distribution (default: global prior)
+        inclusive : bool
+            flag to include initial state in returned tensor (default : False)
+        """
         glb_mean, glb_std, _ = self.prior((b_dim, 1))
         z_mean, z_std = [], []
 
-        for t in range(t_max):
-            # Compute parameters for next time step
-            if t == 0:
-                z_mean_t, z_std_t = glb_mean, glb_std
-            else:
-                z_mean_t, z_std_t =\
-                    self.z_next(z_t, direction, (glb_mean, glb_std))
+        # Initialize latent distribution
+        z_mean_t, z_std_t = glb_mean, glb_std if z_init is None else z_init
+        if inclusive:
             z_mean.append(z_mean_t)
             z_std.append(z_std_t)
-
-            # Sample particles from next time step
+        
+        for t in range(t_max - int(inclusive)):
+            # Sample particles for current timestep
             if sample or n_particles > 1:
                 z_t = self._sample_gauss(
                     z_mean_t.expand(n_particles, -1, -1),
                     z_std_t.expand(n_particles, -1, -1))
             else:
                 z_t = z_mean_t.unsqueeze(0)
+
+            # Compute parameters for next time step
+            z_mean_t, z_std_t =\
+                self.z_next(z_t, direction, (glb_mean, glb_std))
+            z_mean.append(z_mean_t)
+            z_std.append(z_std_t)
 
         if direction == 'bwd':
             z_mean.reverse()
@@ -251,7 +269,7 @@ class MultiBDMM(MultiDGTS):
         sample : bool
             sample at each timestep if true, use the mean otherwise
         n_particles : int
-            number of filtering particles
+            number of filtering particles, overrides sample flag if > 1
         """
         t_max, b_dim = z_mean[0].shape[:2]
         
@@ -326,6 +344,10 @@ class MultiBDMM(MultiDGTS):
            whether to filter or smooth, and in which directions
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
+        flt_particles : int
+           number of filtering particles (default : 1)
+        smt_particles : int
+           number of smoothing particles (default : 1)
         """
         lengths = kwargs.get('lengths')
         mode = kwargs.get('mode', 'fsmooth')
@@ -364,32 +386,46 @@ class MultiBDMM(MultiDGTS):
 
         return infer, prior, outputs
 
-    def kld_prior(self, t_max, n_particles, direction='fwd'):
+    def kld_prior(self, n_particles, direction='fwd'):
         """Compute KL divergence between E[p(z_next|z)] and p(z)."""
-        glb_mean, glb_std, _ = self.prior((t_max, 1))
-        nxt_mean, nxt_std =\
-            self.z_sample(t_max, 1, direction, n_particles=n_particles)
+        glb_mean, glb_std, _ = self.prior((1, 1, 1))
+        nxt_mean, nxt_std = self.z_sample(1, 1, direction, True, n_particles)
         loss = self._kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
         return loss
     
     def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
-        """Custom training step for bidirectional training paradigm."""
-        # Set up arguments
+        """Custom training step for bidirectional training paradigm.
+        Additional keyword arguments:
+
+        f_mode : 'ffilt' or 'bfilt' (default)
+            mode when computing filtering loss
+        s_mode : 'fsmooth' (default) or 'bsmooth'
+            mode when computing smoothing loss
+        f_mult : float
+            how much to weight filtering loss (default : 0.5)
+        s_mult : float
+            how much to weight smoothing loss (default : 0.5)
+        """
+        # Extract arguments
         f_mode = kwargs.get('f_mode', 'bfilt')
         s_mode = kwargs.get('s_mode', 'fsmooth')
         f_mult, s_mult = kwargs.get('f_mult', 0.5), kwargs.get('s_mult', 0.5)
+        match_mult = kwargs.get('match_mult', 0.0)
         train_particles = kwargs.get('train_particles', 25)
+        match_particles = kwargs.get('match_particles', 50)
         t_max, b_dim = mask.shape[:2]
         
         loss = 0
         # Compute prior matching loss
-        if kwargs.get('match_priors', False):
-            loss += kld_mult * b_dim * self.kld_prior(t_max, b_dim, 'fwd')
-            loss += kld_mult * b_dim * self.kld_prior(t_max, b_dim, 'bwd')
-        # Compute loss when backward filtering
+        if match_mult > 0:
+            loss += (match_mult * kld_mult * mask.sum().float() *
+                     self.kld_prior(match_particles, 'fwd'))
+            loss += (match_mult * kld_mult * mask.sum().float() *
+                     self.kld_prior(match_particles, 'bwd'))
+        # Compute loss when filtering
         loss += f_mult * super(MultiBDMM, self).\
             step(inputs, mask, kld_mult, rec_mults, mode=f_mode, **kwargs)
-        # Compute loss when forward smoothing
+        # Compute loss when smoothing
         loss += s_mult * super(MultiBDMM, self).\
             step(inputs, mask, kld_mult, rec_mults, mode=s_mode,
                  flt_particles=train_particles, **kwargs)
@@ -402,7 +438,7 @@ if __name__ == "__main__":
     from datasets.multiseq import seq_collate_dict
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dir', type=str, default="../../data",
+    parser.add_argument('--dir', type=str, default="./data",
                         help='data directory')
     parser.add_argument('--subset', type=str, default="train",
                         help='whether to load train/test data')

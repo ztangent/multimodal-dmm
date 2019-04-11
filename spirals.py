@@ -42,9 +42,8 @@ def train(loader, model, optimizer, epoch, args):
         # Introduce burst deletions to improve interpolation
         inputs = mseq.burst_delete(targets, args.burst_frac)
         # Compute batch loss
-        b_loss = model.step(inputs, mask, kld_mult, rec_mults,
-                            targets=targets, lengths=lengths,
-                            **args.model_args)
+        b_loss = model.step(inputs, mask, kld_mult, rec_mults, targets=targets,
+                            lengths=lengths, **args.train_args)
         loss += b_loss
         # Average over number of datapoints before stepping
         b_loss /= sum(lengths)
@@ -87,7 +86,7 @@ def evaluate(dataset, model, args, fig_path=None):
         inputs = mseq.keep_segment(inputs, t_start, t_stop)
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, outputs = model(inputs, lengths=lengths, sample=False,
-                                      **args.model_args)
+                                      **args.eval_args)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
         rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
@@ -233,7 +232,7 @@ def main(args):
         constructor = getattr(models, args.model)
         model = constructor(args.modalities,
                             dims=(dims[m] for m in args.modalities),
-                            device=args.device)
+                            device=args.device, **args.model_args)
     else:
         print('Model name not recognized.')
         return
@@ -319,6 +318,10 @@ if __name__ == "__main__":
                         help='name of model to train (default: MultiVRNN)')
     parser.add_argument('--model_args', type=yaml.load, default=dict(),
                         help='additional model arguments as yaml dict')
+    parser.add_argument('--train_args', type=yaml.load, default=dict(),
+                        help='additional training arguments as yaml dict')
+    parser.add_argument('--eval_args', type=yaml.load, default=dict(),
+                        help='additional evaluation arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
     parser.add_argument('--batch_size', type=int, default=100, metavar='N',
