@@ -119,8 +119,10 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
     sel_idx = np.concatenate((np.argsort(metric)[:4],
                               np.argsort(metric)[-4:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
-    sel_true = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
-                for i in sel_idx]
+    sel_truth = [dataset.orig['metadata'][i][:,0:2] for i in sel_idx]
+    sel_truth = [(arr[:,0], arr[:,1]) for arr in sel_truth]
+    sel_noisy = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
+                 for i in sel_idx]
     sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
                 for i in sel_idx]
     sel_rng = [(ranges['spiral-x'][i], ranges['spiral-y'][i])
@@ -129,7 +131,7 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
-        true, pred = sel_true[i], sel_pred[i]
+        truth, noisy, pred = sel_truth[i], sel_noisy[i], sel_pred[i]
         rng, m = sel_rng[i], sel_metric[i]
         j, i = (i // 4), (i % 4)
         args.axes[i,j].cla()
@@ -141,8 +143,9 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
                                transOffset=args.axes[i,j].transData)
         args.axes[i,j].add_collection(ec)
         
-        # Plot truth and predictions
-        args.axes[i,j].plot(true[0], true[1], 'b-', linewidth=1)
+        # Plot noisy signal, ground truth and predictions
+        args.axes[i,j].plot(truth[0], truth[1], 'b-', linewidth=1)
+        args.axes[i,j].plot(noisy[0], noisy[1], 'b.', markersize=1.5)
         args.axes[i,j].plot(pred[0], pred[1], 'g-', linewidth=1)
         
         # Set limits and title
@@ -253,7 +256,8 @@ def main(args):
 
     # Create figure to visualize predictions
     if args.visualize:
-        args.fig, args.axes = plt.subplots(4, 2, figsize=(6,8))
+        args.fig, args.axes = plt.subplots(4, 2, figsize=(4,8),
+                                           subplot_kw={'aspect': 'equal'})
         
     # Evaluate model if test flag is set
     if args.test:
@@ -268,11 +272,11 @@ def main(args):
         with torch.no_grad():
             print("--Training--")
             pred, _  = evaluate(train_data, model, args,
-                                os.path.join(args.save_dir, "train.png"))
+                                os.path.join(args.save_dir, "train.pdf"))
             # save_predictions(train_data, pred, pred_train_dir)
             print("--Testing--")
             pred, _  = evaluate(test_data, model, args,
-                                os.path.join(args.save_dir, "test.png"))
+                                os.path.join(args.save_dir, "test.pdf"))
             # save_predictions(test_data, pred, pred_test_dir)
         # Save command line flags, model params
         save_params(args, model)

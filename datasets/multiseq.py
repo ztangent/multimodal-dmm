@@ -35,6 +35,8 @@ class MultiseqDataset(Dataset):
         self.item_as_dict = item_as_dict
 
         # Convert to modality-indexed dictionaries
+        if type(dirs) is not list:
+            dirs = [dirs] * len(self.modalities)
         dirs = {m: d for m, d in zip(modalities, dirs)}
         if type(regex) is not list:
             regex = [regex] * len(self.modalities)
@@ -98,7 +100,7 @@ class MultiseqDataset(Dataset):
                     d = d.reshape(d.shape[0], -1)
                 # Store original data before resampling
                 self.orig[m].append(d)
-                # Subsample/oversample datat base rate
+                # Subsample/oversample data to base rate
                 ratio = self.ratios[m]
                 if ratio > 1:
                     # Time average so that data is at base rate

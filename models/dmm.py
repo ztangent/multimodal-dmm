@@ -287,7 +287,7 @@ class MultiDMM(MultiDGTS):
         bwd_particles = kwargs.get('bwd_particles', self.bwd_particles)
         fwd_particles = kwargs.get('fwd_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
-
+        
         # Setup global (i.e. time-invariant) prior on z
         z_glb_mean, z_glb_std, z_glb_mask = self.prior((t_max, b_dim, 1))
         

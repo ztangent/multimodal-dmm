@@ -65,6 +65,8 @@ class MultiDGTS(nn.Module):
 
     def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
         """Custom training step for multimodal training paradigm."""
+        # Get rid of unrecognized modalities
+        inputs = {m : inputs[m] for m in inputs if m in self.modalities}
         # If targets not provided, assume inputs are targets
         if targets == None:
             targets = inputs

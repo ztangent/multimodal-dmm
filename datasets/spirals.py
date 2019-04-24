@@ -6,7 +6,7 @@ import os
 import argparse
 
 import numpy as np
-import numpy.random as r
+import numpy.random as rand
 import pandas as pd
 
 if __name__ == '__main__':
@@ -23,37 +23,33 @@ class SpiralsDataset(MultiseqDataset):
         subset_dir = os.path.join(base_dir, subset)
         if not os.path.exists(subset_dir):
             gen_dataset(data_dir=base_dir)
-        # Load x and y as separate modalities
-        dirs = {
-            'spiral-x': subset_dir,
-            'spiral-y': subset_dir,
-        }
-        regex = {
-            'spiral-x': "spiral_(\d+)\.csv",
-            'spiral-y': "spiral_(\d+)\.csv"
-        }
-        rates = {'spiral-x': 1, 'spiral-y': 1}
+        # Add metadata to modalities
+        if 'metadata' not in modalities:
+            modalities = modalities + ['metadata']
+        dirs = subset_dir
+        regex = "spiral_(\d+)\.csv"
+        rates = 1
+        # Load x, y, and metadata as separate modalities
         preprocess = {
             # Keep only noisy x coordinates
             'spiral-x': lambda df : df.loc[:,['noisy_x']],
             # Keep only noisy y coordinates
-            'spiral-y': lambda df : df.loc[:,['noisy_y']]
+            'spiral-y': lambda df : df.loc[:,['noisy_y']],
+            # Load everything else as metadata
+            'metadata': lambda df : df.drop(columns=['noisy_x', 'noisy_y'])
         }
         super(SpiralsDataset, self).__init__(
-            modalities,
-            [dirs[m] for m in modalities],
-            [regex[m] for m in modalities],
+            modalities, dirs, regex,
             [preprocess[m] for m in modalities],
-            [rates[m] for m in modalities],
-            base_rate, truncate, item_as_dict)
+            rates, base_rate, truncate, item_as_dict)
 
 def gen_spiral(start_r, stop_r, start_theta, stop_theta,
                aspect_ratio=1, timesteps=100):
     r = np.linspace(start_r, stop_r, timesteps)
     theta = np.linspace(start_theta, stop_theta, timesteps)
-    x = aspect_ratio * r * np.cos(theta)
-    y = r * np.sin(theta)
-    return x, y
+    x = (aspect_ratio ** 0.5) * r * np.cos(theta)
+    y = (aspect_ratio ** -0.5) * r * np.sin(theta)
+    return r, theta, x, y
 
 def gen_dataset(n_examples=1000, n_train=600,
                 timesteps=100, data_dir='./spirals'):
@@ -63,30 +59,31 @@ def gen_dataset(n_examples=1000, n_train=600,
         os.makedirs(os.path.join(data_dir, 'train'))
         os.makedirs(os.path.join(data_dir, 'test'))
     # Reset random seed for consistency    
-    r.seed(1)
+    rand.seed(1)
     # Shuffle indices
     indices = list(range(n_examples))
-    r.shuffle(indices)
+    rand.shuffle(indices)
     # Generate spirals
     spirals = []
     for i in range(n_examples):
         # First half are CW spirals, second half are CCW spirals
         direction = 1 if (i >= n_examples/2) else -1
         # Sample start and stop radiuses
-        start_r = 0.25 + r.random() * 0.5
-        stop_r = 2.25 + r.random() * 0.5
+        start_r = 0.25 + rand.random() * 0.5
+        stop_r = 2.25 + rand.random() * 0.5
         # Sample start and stop angles
-        start_theta = direction * (r.random() * np.pi)
-        stop_theta = direction * (r.random() * np.pi + np.pi*4)
+        start_theta = direction * (rand.random() * np.pi)
+        stop_theta = direction * (rand.random() * np.pi + np.pi*4)
         # Sample aspect ratio using logarithmic prior
-        aspect_ratio = 2 ** (2*r.random()-1)
-        # Generate spiral x-y coordinates
-        x, y = gen_spiral(start_r, stop_r, start_theta, stop_theta,
-                          aspect_ratio, timesteps)
+        ratio = 2 ** (2*rand.random()-1)
+        # Generate spiral in polar and Cartesian coordinates
+        r, theta, x, y = gen_spiral(start_r, stop_r, start_theta, stop_theta,
+                                    ratio, timesteps)
         # Add Gaussian noise
-        noisy_x = x + 0.1 * r.randn(timesteps)
-        noisy_y = y + 0.1 * r.randn(timesteps)
-        spiral = np.stack([x, y, noisy_x, noisy_y], axis=1)
+        noisy_x = x + 0.1 * rand.randn(timesteps)
+        noisy_y = y + 0.1 * rand.randn(timesteps)
+        spiral = np.stack([x, y, noisy_x, noisy_y, r, theta,
+                           [direction]*timesteps, [ratio]*timesteps], axis=1)
         spirals.append(spiral)
     for i in range(n_examples):
         # Shuffle data into train and test sets
@@ -94,7 +91,8 @@ def gen_dataset(n_examples=1000, n_train=600,
         fn = os.path.join(data_dir, subset,
                           'spiral_{:03d}.csv'.format(indices[i]))
         pd.DataFrame(spirals[indices[i]],
-                     columns=['x', 'y', 'noisy_x', 'noisy_y']).\
+                     columns=['x', 'y', 'noisy_x', 'noisy_y',
+                              'r', 'theta', 'direction', 'ratio']).\
                      to_csv(fn, index=False)
 
 def test_dataset(data_dir='./spirals', subset='train', stats=False):
