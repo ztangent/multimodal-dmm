@@ -309,5 +309,16 @@ def keep_segment(batch_in, t_start, t_stop, modalities=None):
         t_max = batch_in[m].shape[0]
         batch_out[m][range(0,t_start) + range(t_stop,t_max),:,:] = float('nan')
     return batch_out
+
+def del_segment(batch_in, t_start, t_stop, modalities=None):
+    """Delete specified time segment [t_start, t_stop)."""
+    if modalities == None:
+        modalities = batch_in.keys()
+    batch_out = dict()
+    for m in modalities:
+        batch_out[m] = torch.tensor(batch_in[m])
+        t_max = batch_in[m].shape[0]
+        batch_out[m][t_start:t_stop,:,:] = float('nan')
+    return batch_out
     
         
