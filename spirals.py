@@ -68,6 +68,7 @@ def train(loader, model, optimizer, epoch, args):
 def evaluate(dataset, model, args, fig_path=None):
     model.eval()
     predictions = {m: [] for m in args.modalities}
+    observed = {m: [] for m in args.modalities}
     ranges = {m: [] for m in args.modalities}
     data_num = 0
     kld_loss, rec_loss, mse_loss = [], [], []
@@ -92,9 +93,10 @@ def evaluate(dataset, model, args, fig_path=None):
         rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
-        # Store predictions and confidence intervals
+        # Store observations, predictions and confidence intervals
         out_mean, out_std = outputs
         for m in out_mean.keys():
+            observed[m].append(inputs[m].view(-1).cpu().numpy())
             predictions[m].append(out_mean[m].view(-1).cpu().numpy())
             ranges[m].append(1.96 * out_std[m].view(-1).cpu().numpy())
         # Compute mean squared error over time
@@ -102,7 +104,8 @@ def evaluate(dataset, model, args, fig_path=None):
         mse_loss.append(mse.mean().item())
     # Plot predictions against truth
     if args.visualize:
-        visualize(dataset, predictions, ranges, mse_loss, args, fig_path)
+        visualize(dataset, observed, predictions, ranges,
+                  mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
@@ -112,17 +115,19 @@ def evaluate(dataset, model, args, fig_path=None):
           .format(kld_loss, rec_loss, mse_loss))
     return predictions, losses
 
-def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
+def visualize(dataset, observed, predictions, ranges,
+              metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
-
     # Select top 4 and bottom 4
     sel_idx = np.concatenate((np.argsort(metric)[:4],
                               np.argsort(metric)[-4:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
     sel_truth = [dataset.orig['metadata'][i][:,0:2] for i in sel_idx]
     sel_truth = [(arr[:,0], arr[:,1]) for arr in sel_truth]
-    sel_noisy = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
-                 for i in sel_idx]
+    sel_data = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
+                for i in sel_idx]
+    sel_obs = [(observed['spiral-x'][i], observed['spiral-y'][i])
+               for i in sel_idx]
     sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
                 for i in sel_idx]
     sel_rng = [(ranges['spiral-x'][i], ranges['spiral-y'][i])
@@ -131,7 +136,8 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
-        truth, noisy, pred = sel_truth[i], sel_noisy[i], sel_pred[i]
+        truth, data = sel_truth[i], sel_data[i]
+        obs, pred = sel_obs[i], sel_pred[i]
         rng, m = sel_rng[i], sel_metric[i]
         j, i = (i // 4), (i % 4)
         args.axes[i,j].cla()
@@ -143,9 +149,16 @@ def visualize(dataset, predictions, ranges, metric, args, fig_path=None):
                                transOffset=args.axes[i,j].transData)
         args.axes[i,j].add_collection(ec)
         
-        # Plot noisy signal, ground truth and predictions
+        # Plot ground truth
         args.axes[i,j].plot(truth[0], truth[1], 'b-', linewidth=1)
-        args.axes[i,j].plot(noisy[0], noisy[1], 'b.', markersize=1.5)
+
+        # Plot observations (blue = both, magenta = x-only, yellow = y-only)
+        if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
+            args.axes[i,j].plot(obs[0], data[1], 'm.', markersize=1.5)
+            args.axes[i,j].plot(data[0], obs[1], 'y.', markersize=1.5)
+        args.axes[i,j].plot(obs[0], obs[1], 'b.', markersize=1.5)
+
+        # Plot predictions
         args.axes[i,j].plot(pred[0], pred[1], 'g-', linewidth=1)
         
         # Set limits and title
