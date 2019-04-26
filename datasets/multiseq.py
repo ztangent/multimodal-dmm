@@ -277,8 +277,10 @@ def rand_delete(batch_in, del_frac, modalities=None):
     if modalities == None:
         modalities = batch_in.keys()
     batch_out = dict()
-    for m in modalities:
+    for m in batch_in.keys():
         batch_out[m] = torch.tensor(batch_in[m])
+        if m not in modalities:
+            continue
         t_max, b_dim = batch_in[m].shape[:2]
         del_idx = np.random.choice(t_max, int(del_frac * t_max), False)
         batch_out[m][del_idx,:,:] = float('nan')
@@ -289,8 +291,10 @@ def burst_delete(batch_in, burst_frac, modalities=None):
     if modalities == None:
         modalities = batch_in.keys()
     batch_out = dict()
-    for m in modalities:
+    for m in batch_in.keys():
         batch_out[m] = torch.tensor(batch_in[m])
+        if m not in modalities:
+            continue
         t_max, b_dim = batch_in[m].shape[:2]
         burst_len = int(burst_frac * t_max)
         for b in range(b_dim):
@@ -304,8 +308,10 @@ def keep_segment(batch_in, t_start, t_stop, modalities=None):
     if modalities == None:
         modalities = batch_in.keys()
     batch_out = dict()
-    for m in modalities:
+    for m in batch_in.keys():
         batch_out[m] = torch.tensor(batch_in[m])
+        if m not in modalities:
+            continue
         t_max = batch_in[m].shape[0]
         batch_out[m][range(0,t_start) + range(t_stop,t_max),:,:] = float('nan')
     return batch_out
@@ -315,8 +321,10 @@ def del_segment(batch_in, t_start, t_stop, modalities=None):
     if modalities == None:
         modalities = batch_in.keys()
     batch_out = dict()
-    for m in modalities:
+    for m in batch_in.keys():
         batch_out[m] = torch.tensor(batch_in[m])
+        if m not in modalities:
+            continue
         t_max = batch_in[m].shape[0]
         batch_out[m][t_start:t_stop,:,:] = float('nan')
     return batch_out
