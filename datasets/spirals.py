@@ -3,7 +3,6 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os
-import argparse
 
 import numpy as np
 import numpy.random as rand
@@ -41,7 +40,7 @@ class SpiralsDataset(MultiseqDataset):
         super(SpiralsDataset, self).__init__(
             modalities, dirs, regex,
             [preprocess[m] for m in modalities],
-            rates, base_rate, truncate, item_as_dict)
+            rates, base_rate, truncate, [], item_as_dict)
 
 def gen_spiral(start_r, stop_r, start_theta, stop_theta,
                aspect_ratio=1, timesteps=100):
@@ -107,7 +106,7 @@ def test_dataset(data_dir='./spirals', subset='train', stats=False):
     print("Checking through data for mismatched sequence lengths...")
     for i, data in enumerate(dataset):
         print("Sequence: ", dataset.seq_ids[i])
-        x, y = data
+        x, y = data[:2]
         print(x.shape, y.shape)
         if len(x) != len(y):
             print("WARNING: Mismatched sequence lengths.")
@@ -123,6 +122,7 @@ def test_dataset(data_dir='./spirals', subset='train', stats=False):
             print("Min:", m_min[m])
         
 if __name__ == '__main__':
+    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_examples', type=int, default=1000, metavar='N',
                         help='number of examples to generate (default: 1000)')

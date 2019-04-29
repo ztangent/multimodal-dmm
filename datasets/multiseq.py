@@ -13,7 +13,8 @@ class MultiseqDataset(Dataset):
     """Multimodal dataset for (synchronous) time series and sequential data."""
     
     def __init__(self, modalities, dirs, regex, preprocess, rates,
-                 base_rate=None, truncate=False, item_as_dict=False):
+                 base_rate=None, truncate=False,
+                 ids_as_mods=[], item_as_dict=False):
         """Loads valence ratings and features for each modality.
 
         modalities -- names of each input modality
@@ -23,6 +24,7 @@ class MultiseqDataset(Dataset):
         rates -- sampling rates of each modality
         base_rate -- base_rate to subsample/ovesample to
         truncate -- if true, truncate to modality with minimum length
+        ids_as_mods -- add sequence ids as modalities with these names
         item_as_dict -- whether to return data as dictionary
         """
         # Store arguments
@@ -71,6 +73,9 @@ class MultiseqDataset(Dataset):
                                 format(len(paths[m])))
             if seq_ids[m] != self.seq_ids:
                 raise Exception("Sequence IDs do not match.")
+        # Store all possible values for sequence IDs
+        self.seq_id_sets = [list(sorted(set(s_ids))) for s_ids in
+                            list(zip(*self.seq_ids))]
 
         # Compute ratio to base rate
         self.ratios = {m: r/self.base_rate for m, r in
@@ -95,9 +100,6 @@ class MultiseqDataset(Dataset):
                 elif re.match("^.*\.tsv", fp):
                     d = pd.read_csv(fp, sep='\t')
                     d = np.array(preprocess[m](d))
-                # Flatten inputs
-                if len(d.shape) > 2:
-                    d = d.reshape(d.shape[0], -1)
                 # Store original data before resampling
                 self.orig[m].append(d)
                 # Subsample/oversample data to base rate
@@ -106,7 +108,7 @@ class MultiseqDataset(Dataset):
                     # Time average so that data is at base rate
                     ratio = int(ratio)
                     end = ratio * (len(d)//ratio)
-                    avg = np.mean(d[:end].reshape(-1, ratio, d.shape[1]), 1)
+                    avg = np.mean(d[:end].reshape(-1, ratio, *d.shape[1:]), 1)
                     if end < len(d):
                         remain = d[end:].mean(axis=0)[np.newaxis,:]
                         d = np.concatenate([avg, remain])
@@ -124,6 +126,23 @@ class MultiseqDataset(Dataset):
                 for m in self.modalities:
                     self.data[m][-1] = self.data[m][-1][:seq_len]
             self.lengths.append(seq_len)
+
+        # Add information from sequence IDs as additional modalities
+        self.ids_as_mods = ids_as_mods
+        for m in ids_as_mods:
+            self.modalities.append(m)
+            self.rates.append(self.base_rate)
+            self.ratios[m] = 1.0
+            self.data[m] = []
+        for seq_id, seq_len in zip(self.seq_ids, self.lengths):
+            for k, m in enumerate(ids_as_mods):
+                # Ignore ID fields that are set to None
+                if m is None:
+                    continue
+                # Repeat ID field for the length of the whole sequence
+                d = self.seq_id_sets[k].index(seq_id[k])
+                d = np.array([[d]] * seq_len)
+                self.data[m].append(d)
             
     def __len__(self):
         return len(self.seq_ids)
@@ -226,14 +245,14 @@ def len_to_mask(lengths):
 
 def pad_and_merge(sequences, max_len=None):
     """Pads and merges unequal length sequences into batch tensor."""
-    dims = sequences[0].shape[1]
+    dims = sequences[0].shape[1:]
     lengths = [len(seq) for seq in sequences]
     if max_len is None:
         max_len = max(lengths)
-    padded_seqs = torch.ones(len(sequences), max_len, dims) * float('nan')
+    padded_seqs = torch.ones(max_len, len(sequences), *dims) * float('nan')
     for i, seq in enumerate(sequences):
         end = lengths[i]
-        padded_seqs[i, :end, :] = torch.from_numpy(seq[:end,:])
+        padded_seqs[:end, i] = torch.from_numpy(seq[:end])
     if len(sequences) == 1:
         padded_seqs = padded_seqs.float()
     return padded_seqs
@@ -241,7 +260,7 @@ def pad_and_merge(sequences, max_len=None):
 def seq_collate(data, time_first=True):
     """Collates multimodal variable length sequences into padded batch."""
     padded = []
-    n_modalities = len(data) #n_modalities = len(data[0])
+    n_modalities = len(data)
     lengths = np.zeros(n_modalities, dtype=int)
     data.sort(key=lambda x: len(x[0]), reverse=True)
     data = zip(*data)
@@ -251,10 +270,10 @@ def seq_collate(data, time_first=True):
     lengths = list(lengths)
     for modality in data:
         m_padded = pad_and_merge(modality, max(lengths))
-        padded.append(m_padded.permute(1, 0, 2) if time_first else m_padded)
+        padded.append(m_padded if time_first else m_padded.transpose(0, 1))
     mask = len_to_mask(lengths)
-    if time_first:
-        mask = mask.permute(1, 0, 2)
+    if not time_first:
+        mask = mask.transpose(0, 1)
     return tuple(padded + [mask, lengths])
 
 def seq_collate_dict(data, time_first=True):
@@ -266,10 +285,10 @@ def seq_collate_dict(data, time_first=True):
     for m in modalities:
         m_data = [d[m] for d in data]
         m_padded = pad_and_merge(m_data, max(lengths))
-        batch[m] = m_padded.permute(1, 0, 2) if time_first else m_padded
+        batch[m] = m_padded if time_first else m_padded.transpose(0, 1)
     mask = len_to_mask(lengths)
     if time_first:
-        mask = mask.permute(1, 0, 2)
+        mask = mask.transpose(0, 1)
     return batch, mask, lengths
 
 def rand_delete(batch_in, del_frac, modalities=None):
@@ -283,7 +302,7 @@ def rand_delete(batch_in, del_frac, modalities=None):
             continue
         t_max, b_dim = batch_in[m].shape[:2]
         del_idx = np.random.choice(t_max, int(del_frac * t_max), False)
-        batch_out[m][del_idx,:,:] = float('nan')
+        batch_out[m][del_idx] = float('nan')
     return batch_out
 
 def burst_delete(batch_in, burst_frac, modalities=None):
@@ -300,7 +319,7 @@ def burst_delete(batch_in, burst_frac, modalities=None):
         for b in range(b_dim):
             t_start = np.random.randint(t_max)
             t_stop = min(t_start + burst_len, t_max)
-            batch_out[m][t_start:t_stop, b, :] = float('nan')
+            batch_out[m][t_start:t_stop, b] = float('nan')
     return batch_out
 
 def keep_segment(batch_in, t_start, t_stop, modalities=None):
@@ -313,7 +332,7 @@ def keep_segment(batch_in, t_start, t_stop, modalities=None):
         if m not in modalities:
             continue
         t_max = batch_in[m].shape[0]
-        batch_out[m][range(0,t_start) + range(t_stop,t_max),:,:] = float('nan')
+        batch_out[m][range(0,t_start) + range(t_stop,t_max)] = float('nan')
     return batch_out
 
 def del_segment(batch_in, t_start, t_stop, modalities=None):
@@ -326,7 +345,7 @@ def del_segment(batch_in, t_start, t_stop, modalities=None):
         if m not in modalities:
             continue
         t_max = batch_in[m].shape[0]
-        batch_out[m][t_start:t_stop,:,:] = float('nan')
+        batch_out[m][t_start:t_stop] = float('nan')
     return batch_out
     
         
