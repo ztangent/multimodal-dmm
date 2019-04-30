@@ -93,7 +93,8 @@ class MultiDGTS(nn.Module):
             if type(mask) is torch.Tensor:
                 n_data = torch.sum(mask)
             else:
-                n_data = inputs[self.modalities[-1]].numel()
+                shape = inputs[self.modalities[-1]].shape
+                n_data = (shape[0] * shape[1])
             loss /= n_data
         return loss
     
@@ -112,8 +113,12 @@ class MultiDGTS(nn.Module):
             if m not in inputs:
                 continue
             mult = 1.0 if m not in rec_mults else rec_mults[m]
-            loss += mult * self._nll_gauss(out_mean[m], out_std[m],
-                                           inputs[m], mask)
+            if self.dists[m] == 'Bernoulli':
+                loss += mult * self._nll_bernoulli(out_mean[m],
+                                                   inputs[m], mask)
+            else:
+                loss += mult * self._nll_gauss(out_mean[m], out_std[m],
+                                               inputs[m], mask)
         return loss
             
     def _sample_gauss(self, mean, std):
@@ -132,7 +137,7 @@ class MultiDGTS(nn.Module):
         return kld
 
     def _nll_bernoulli(self, theta, x, mask=None):
-        nll_element = x*torch.log(theta) + (1-x)*torch.log(1-theta)
+        nll_element = -(x*torch.log(theta) + (1-x)*torch.log(1-theta))
         if mask is None:
             mask = 1 - torch.isnan(x)
         else:

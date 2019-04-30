@@ -20,7 +20,7 @@ import torch.nn as nn
 from .dgts import MultiDGTS
 
 class MultiDKS(MultiDGTS):
-    def __init__(self, modalities, dims, h_dim=32, z_dim=32,
+    def __init__(self, modalities, dims, dists=None, h_dim=32, z_dim=32,
                  z0_mean=0.0, z0_std=1.0, n_layers=1, bias=True,
                  device=torch.device('cuda:0')):
         """
@@ -30,6 +30,8 @@ class MultiDKS(MultiDGTS):
             list of names for each modality
         dims : list of int
             list of feature dimensions for each modality
+        dists : list of str
+            list of distributions ('Normal' [default] or 'Bernoulli')
         h_dim : int
             size of intermediary layers and RNN hidden state
         z_dim : int
@@ -48,6 +50,11 @@ class MultiDKS(MultiDGTS):
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.n_layers = n_layers
+
+        # Default to Gaussian distributions
+        if dists is None:
+            dists = ['Normal'] * self.n_mods
+        self.dists = dict(zip(modalities, dists))
 
         # Feature-extracting transformations
         self.phi = nn.ModuleDict()

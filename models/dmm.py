@@ -20,8 +20,9 @@ from .common import GaussianMLP, GaussianGTF
 from .dgts import MultiDGTS
 
 class MultiDMM(MultiDGTS):
-    def __init__(self, modalities, dims, encoders=None, decoders=None,
-                 h_dim=32, z_dim=32, z0_mean=0.0, z0_std=1.0, min_std=1e-3,
+    def __init__(self, modalities, dims, dists=None,
+                 encoders=None, decoders=None, h_dim=32, z_dim=32,
+                 z0_mean=0.0, z0_std=1.0, min_std=1e-3,
                  bwd_particles=1, device=torch.device('cuda:0')):
         """
         Construct multimodal deep Markov model.
@@ -30,10 +31,12 @@ class MultiDMM(MultiDGTS):
             list of names for each modality
         dims : list of int
             list of feature dimensions for each modality
-        encoders : list of nn.Module
-            list of custom encoder modules for each modality
-        decoders : list of nn.Module
-            list of custom decoder modules for each modality
+        dists : list of str
+            list of distributions ('Normal' [default] or 'Bernoulli')
+        encoders : list or dict of nn.Module
+            list or dict of custom encoder modules for each modality
+        decoders : list or dict of nn.Module
+            list or dict of custom decoder modules for each modality
         h_dim : int
             size of intermediary layers
         z_dim : int
@@ -51,33 +54,37 @@ class MultiDMM(MultiDGTS):
         self.dims = dict(zip(modalities, dims))
         self.h_dim = h_dim
         self.z_dim = z_dim
+
+        # Default to Gaussian distributions
+        if dists is None:
+            dists = ['Normal'] * self.n_mods
+        self.dists = dict(zip(modalities, dists))
             
-        # Encoders for each modality p(z|x) = N(mu(x), sigma(x))
+        # Encoders for each modality q'(z|x) = N(mu(x), sigma(x))
+        # Where q'(z|x) = p(z|x) / p(z) 
         self.enc = nn.ModuleDict()            
+        # Default to MLP with single-layer feature extractor
+        for m in self.modalities:
+            self.enc[m] = nn.Sequential(
+                nn.Linear(self.dims[m], h_dim),
+                nn.ReLU(),
+                GaussianMLP(h_dim, z_dim, h_dim))
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
                 encoders = zip(modalities, encoders)
             self.enc.update(encoders)
-        else:
-            # Default to MLP with single-layer feature extractor
-            for m in self.modalities:
-                self.enc[m] = nn.Sequential(
-                    nn.Linear(self.dims[m], h_dim),
-                    nn.ReLU(),
-                    GaussianMLP(h_dim, z_dim, h_dim))
-
-        # Decoders for each modality p(xi|z) = N(mu(z), sigma(z))
+                
+        # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
+        # Default to MLP
+        for m in self.modalities:
+            self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
                 decoders = zip(modalities, decoders)
             self.enc.update(decoders)
-        else:
-            # Default to MLP
-            for m in self.modalities:
-                self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
 
         # Forward transition p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         self.fwd = GaussianGTF(z_dim, h_dim, min_std=1e-3)
@@ -131,7 +138,7 @@ class MultiDMM(MultiDGTS):
             input_m = torch.tensor(inputs[m])
             input_m[torch.isnan(input_m)] = 0.0
             # Compute mean and std of latent z given modality m
-            z_mean_m, z_std_m = self.enc[m](input_m.view(-1, self.dims[m]))
+            z_mean_m, z_std_m = self.enc[m](input_m.view(t_max*b_dim, -1))
             z_mean_m = z_mean_m.reshape(t_max, b_dim, -1)
             z_std_m = z_std_m.reshape(t_max, b_dim, -1)
             # Add p(z|x_m) to the PoE calculation

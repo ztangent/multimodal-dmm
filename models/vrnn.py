@@ -23,10 +23,10 @@ from .common import GaussianMLP
 from .dgts import MultiDGTS
 
 class MultiVRNN(MultiDGTS):
-    def __init__(self, modalities, dims, encoders=None, decoders=None,
-                 h_dim=16, z_dim=16, z0_mean=0.0, z0_std=1.0,
-                 n_layers=1, bias=True, recur_mode='no_inputs',
-                 device=torch.device('cuda:0')):
+    def __init__(self, modalities, dims, dists=None,
+                 encoders=None, decoders=None, h_dim=16, z_dim=16,
+                 z0_mean=0.0, z0_std=1.0, n_layers=1, bias=True,
+                 recur_mode='no_inputs', device=torch.device('cuda:0')):
         """
         Construct multimodal variational recurrent neural network.
 
@@ -34,10 +34,12 @@ class MultiVRNN(MultiDGTS):
             list of names for each modality
         dims : list of int
             list of feature dimensions for each modality
-        encoders : list of nn.Module
-            list of custom encoder modules for each modality
-        decoders : list of nn.Module
-            list of custom decoder modules for each modality
+        dists : list of str
+            list of distributions ('Normal' [default] or 'Bernoulli')
+        encoders : list or dict of nn.Module
+            list or dict of custom encoder modules for each modality
+        decoders : list or dict of nn.Module
+            list or dict of custom decoder modules for each modality
         h_dim : int
             number of hidden dimensions
         z_dim : int
@@ -60,6 +62,11 @@ class MultiVRNN(MultiDGTS):
         self.n_layers = n_layers
         self.recur_mode = recur_mode
 
+        # Default to Gaussian distributions
+        if dists is None:
+            dists = ['Normal'] * self.n_mods
+        self.dists = dict(zip(modalities, dists))
+        
         # Feature-extracting transformations
         self.phi = nn.ModuleDict()
         for m in self.modalities:
@@ -72,27 +79,25 @@ class MultiVRNN(MultiDGTS):
 
         # Encoder p(z|x) = N(mu(x,h), sigma(x,h))
         self.enc = nn.ModuleDict()
+        # Default to MLP
+        for m in self.modalities:
+            self.enc[m] = GaussianMLP(h_dim + h_dim, z_dim, h_dim)
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
                 encoders = zip(modalities, encoders)
             self.enc.update(encoders)
-        else:
-            # Default to MLP
-            for m in self.modalities:
-                self.enc[m] = GaussianMLP(h_dim + h_dim, z_dim, h_dim)
 
         # Decoders p(xi|z) = N(mu(z,h), sigma(z,h))
         self.dec = nn.ModuleDict()
+        # Default to MLP
+        for m in self.modalities:
+            self.dec[m] = GaussianMLP(h_dim + h_dim, self.dims[m], h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
                 decoders = zip(modalities, decoders)
             self.enc.update(decoders)
-        else:
-            # Default to MLP
-            for m in self.modalities:
-                self.dec[m] = GaussianMLP(h_dim + h_dim, self.dims[m], h_dim)
             
         # Prior p(z) = N(mu(h), sigma(h))
         self.prior = GaussianMLP(h_dim, z_dim, h_dim)
