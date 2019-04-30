@@ -17,7 +17,7 @@ class SpiralsDataset(MultiseqDataset):
     """Dataset of noisy spirals."""
 
     def __init__(self, modalities, base_dir, subset,
-                 base_rate=None, truncate=False, item_as_dict=False):
+                 truncate=False, item_as_dict=False):
         # Generate dataset if it doesn't exist yet
         subset_dir = os.path.join(base_dir, subset)
         if not os.path.exists(subset_dir):
@@ -27,7 +27,8 @@ class SpiralsDataset(MultiseqDataset):
             modalities = modalities + ['metadata']
         dirs = subset_dir
         regex = "spiral_(\d+)\.csv"
-        rates = 1
+        rates = 1.0
+        base_rate = rates
         # Load x, y, and metadata as separate modalities
         preprocess = {
             # Keep only noisy x coordinates

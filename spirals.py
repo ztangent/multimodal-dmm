@@ -176,8 +176,7 @@ def save_params(args, model):
     fname = 'param_hist.tsv'
     df = pd.DataFrame([vars(args)], columns=vars(args).keys())
     df = df[['save_dir', 'modalities', 'normalize', 'batch_size', 'split',
-             'epochs', 'lr', 'kld_mult', 'rec_mults',
-             'kld_anneal', 'base_rate']]
+             'epochs', 'lr', 'kld_mult', 'rec_mults', 'kld_anneal']]
     df.insert(0, 'model', [model.__class__.__name__])
     df['h_dim'] = model.h_dim
     df['z_dim'] = model.z_dim
@@ -196,10 +195,8 @@ def load_data(modalities, args):
     print("Loading data...")
     data_dir = os.path.abspath(args.data_dir)
     train_data = SpiralsDataset(modalities, data_dir, args.train_subdir,
-                                base_rate=args.base_rate,
                                 truncate=True, item_as_dict=True)
     test_data = SpiralsDataset(modalities, data_dir, args.test_subdir,
-                               base_rate=args.base_rate,
                                truncate=True, item_as_dict=True)
     print("Done.")
     if len(args.normalize) > 0:
@@ -331,8 +328,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='MultiVRNN', metavar='S',
-                        help='name of model to train (default: MultiVRNN)')
+    parser.add_argument('--model', type=str, default='bdmm', metavar='S',
+                        help='name of model to train (default: bdmm)')
     parser.add_argument('--model_args', type=yaml.load, default=dict(),
                         help='additional model arguments as yaml dict')
     parser.add_argument('--train_args', type=yaml.load, default=dict(),
@@ -349,8 +346,6 @@ if __name__ == "__main__":
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
                         help='learning rate (default: 1e-4)')
-    parser.add_argument('--base_rate', type=float, default=1.0, metavar='R',
-                        help='sampling rate to resample to (default: 1.0)')
     parser.add_argument('--seed', type=int, default=1, metavar='N',
                         help='random seed (default: 1)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',

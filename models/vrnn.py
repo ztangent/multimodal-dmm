@@ -97,7 +97,7 @@ class MultiVRNN(MultiDGTS):
             # Use custom decoders if provided
             if type(decoders) is list:
                 decoders = zip(modalities, decoders)
-            self.enc.update(decoders)
+            self.dec.update(decoders)
             
         # Prior p(z) = N(mu(h), sigma(h))
         self.prior = GaussianMLP(h_dim, z_dim, h_dim)
