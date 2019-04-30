@@ -1,6 +1,6 @@
 """Multimodal Bidirectional Deep Markov Model (MBDMM).
 
-Original DMM described by Krishan et. al. (https://arxiv.org/abs/1609.09869)
+Original DMM described by Krishnan et. al. (https://arxiv.org/abs/1609.09869)
 
 To handle missing modalities, we use the MVAE approach
 described by Wu & Goodman (https://arxiv.org/abs/1802.05335).
@@ -76,7 +76,6 @@ class MultiBDMM(MultiDGTS):
             if type(encoders) is list:
                 encoders = zip(modalities, encoders)
             self.enc.update(encoders)
-
                 
         # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
@@ -87,7 +86,7 @@ class MultiBDMM(MultiDGTS):
             # Use custom decoders if provided
             if type(decoders) is list:
                 decoders = zip(modalities, decoders)
-            self.enc.update(decoders)
+            self.dec.update(decoders)
 
         # State transitions q'(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         # Where q'(z|z_prev) = p(z|z_prev) / p(z) 
@@ -132,12 +131,12 @@ class MultiBDMM(MultiDGTS):
             # Ignore missing modalities
             if m not in inputs:
                 continue
-            # Mask out NaNs
-            mask_m = 1 - torch.isnan(inputs[m]).any(dim=-1)
+            # Mask out all timesteps with NaNs
+            mask_m = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
             input_m = torch.tensor(inputs[m])
             input_m[torch.isnan(input_m)] = 0.0
             # Compute mean and std of latent z given modality m
-            z_mean_m, z_std_m = self.enc[m](input_m.view(t_max*b_dim, -1))
+            z_mean_m, z_std_m = self.enc[m](input_m.flatten(0,1))
             z_mean_m = z_mean_m.reshape(t_max, b_dim, -1)
             z_std_m = z_std_m.reshape(t_max, b_dim, -1)
             # Add p(z|x_m) to the PoE calculation
@@ -168,8 +167,9 @@ class MultiBDMM(MultiDGTS):
         out_mean, out_std = dict(), dict()        
         for m in self.modalities:
             out_mean_m, out_std_m = self.dec[m](z.view(-1, self.z_dim))
-            out_mean[m] = out_mean_m.reshape(t_max, b_dim, -1)
-            out_std[m] = out_std_m.reshape(t_max, b_dim, -1)
+            out_shape = [t_max, b_dim] + list(out_mean_m.shape[1:])
+            out_mean[m] = out_mean_m.reshape(*out_shape)
+            out_std[m] = out_std_m.reshape(*out_shape)
         return out_mean, out_std
 
     def z_next(self, z, direction='fwd', glb_prior=None):
@@ -343,7 +343,7 @@ class MultiBDMM(MultiDGTS):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         inputs : dict of str : torch.tensor
-           keys are modality names, tensors are (T, B, D)
+           keys are modality names, tensors are (T, B, D, ...)
            for max sequence length T, batch size B and input dims D
         lengths : list of int
            lengths of all input sequences in the batch
