@@ -134,6 +134,7 @@ class MultiseqDataset(Dataset):
             self.rates.append(self.base_rate)
             self.ratios[m] = 1.0
             self.data[m] = []
+            self.orig[m] = []
         for seq_id, seq_len in zip(self.seq_ids, self.lengths):
             for k, m in enumerate(ids_as_mods):
                 # Ignore ID fields that are set to None
@@ -143,6 +144,7 @@ class MultiseqDataset(Dataset):
                 d = self.seq_id_sets[k].index(seq_id[k])
                 d = np.array([[d]] * seq_len)
                 self.data[m].append(d)
+                self.orig[m].append(d)
             
     def __len__(self):
         return len(self.seq_ids)
@@ -220,7 +222,34 @@ class MultiseqDataset(Dataset):
         dataset = copy.deepcopy(self)
         dataset.split_(n)
         return dataset
-            
+
+    def select(self, seq_ids, invert=False):
+        """Select sequences by identifiers and return new dataset.
+
+        seq_ids -- list of lists, where list k contains the
+                   identifiers extracted by the kth regex group
+        invert -- whether to invert selection (i.e. delete specified IDs)
+        """
+        sel = copy.deepcopy(self)
+        # Find indices in the intersection of all specified identifiers
+        idx = list(range(len(self)))
+        for k in range(len(seq_ids)):
+            if seq_ids[k] is None:
+                seq_ids[k] = self.seq_id_sets[k]
+            idx = [i for i, seq_id in enumerate(self.seq_ids)
+                   if seq_id[k] in seq_ids[k] and i in idx]
+        if invert:
+            idx = [i for i in range(len(self)) if i not in idx]
+        # Select data
+        sel.seq_ids = [sel.seq_ids[i] for i in idx]
+        sel.seq_id_sets = [list(sorted(set(s_ids))) for s_ids in
+                           list(zip(*sel.seq_ids))]
+        sel.lengths = [sel.lengths[i] for i in idx]
+        for m in self.modalities:
+            sel.data[m] = [sel.data[m][i] for i in idx]
+            sel.orig[m] = [sel.orig[m][i] for i in idx]
+        return sel
+    
     @classmethod
     def merge(cls, set1, set2):
         """Merge two datasets."""
@@ -231,6 +260,9 @@ class MultiseqDataset(Dataset):
         merged = copy.deepcopy(set1)
         merged.orig.clear()
         merged.seq_ids += set2.seq_ids
+        merged.seq_id_sets = [list(set(set1.seq_id_sets[k]) |
+                                   set(set2.seq_id_sets[k]))
+                              for k in range(len(set1.seq_id_sets))]
         merged.rates = [merged.base_rate] * len(merged.modalities)
         merged.ratios = [1] * len(merged.modalities)
         for m in merged.modalities:
