@@ -141,7 +141,8 @@ class MultiDGTS(nn.Module):
         if mask is None:
             mask = 1 - torch.isnan(x)
         else:
-            mask = mask * (1 - torch.isnan(x))
+            shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
+            mask = (1 - torch.isnan(x)) * mask.view(*shape)
         nll_element = nll_element.masked_select(mask)
         return torch.sum(nll_element)
 
@@ -149,7 +150,8 @@ class MultiDGTS(nn.Module):
         if mask is None:
             mask = 1 - torch.isnan(x)
         else:
-            mask = mask * (1 - torch.isnan(x))
+            shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
+            mask = (1 - torch.isnan(x)) * mask.view(*shape)
         x = torch.tensor(x)
         x[torch.isnan(x)] = 0.0
         nll_element = ( ((x-mean).pow(2)) / (2 * std.pow(2)) + std.log() +

@@ -53,6 +53,7 @@ class Conv(nn.Module):
     """Convolutional layer with optional batch norm and ReLU."""
     def __init__(self, n_channels, n_kernels,
                  kernel_size=3, stride=2, padding=1, last=False):
+        super(Conv, self).__init__()
         self.conv = nn.Conv2d(
             n_channels, n_kernels,
             kernel_size, stride, padding
@@ -73,6 +74,7 @@ class Deconv(nn.Module):
     """De-convolutional layer with optional batch norm and ReLU."""
     def __init__(self, n_channels, n_kernels,
                  kernel_size=4, stride=2, padding=1, last=False):
+        super(Deconv, self).__init__()
         self.deconv = nn.ConvTranspose2d(
             n_channels, n_kernels,
             kernel_size, stride, padding
@@ -93,6 +95,7 @@ class ImageEncoder(nn.Module):
     """Convolutional encoder for images."""
     def __init__(self, z_dim, h_dim=256,
                  img_size=64, n_channels=3, n_kernels=64, n_layers=3):
+        super(ImageEncoder, self).__init__()
         self.feat_size = img_size // 2**n_layers
         self.feat_dim = self.feat_size ** 2 * n_kernels
 
@@ -114,9 +117,10 @@ class ImageDecoder(nn.Module):
     """De-convolutional decoder for images."""
     def __init__(self, z_dim, h_dim=256,
                  img_size=64, n_channels=3, n_kernels=64, n_layers=3):
+        super(ImageDecoder, self).__init__()
         self.feat_size = img_size // 2**n_layers
         self.feat_dim = self.feat_size ** 2 * n_kernels
-        self.feat_shape = (self.feat_size, self.feat_size, n_kernels)
+        self.feat_shape = (n_kernels, self.feat_size, self.feat_size)
 
         self.z_to_feat = nn.Sequential(
             nn.Linear(z_dim, h_dim),
