@@ -57,7 +57,10 @@ def download_weizmann(dest='./weizmann'):
     def download(filename, source, dest):
         print("Downloading '{}'...".format(filename))
         urlretrieve(source + filename, dest + filename, reporthook=progress)
-    
+
+    # Use FFMPEG to downsample the video from 180X144 to 80x64
+    ffmpeg_params = {'-s': '80x64'}
+
     import zipfile
     for act in actions.keys():
         zip_path = os.path.join(dest, act + '.zip')
@@ -69,17 +72,30 @@ def download_weizmann(dest='./weizmann'):
                   format(act, len(vid_names)))
             f.extractall(dest, members=vid_names)
         for vn in vid_names:
+            # Remove extension
+            vn_no_ext = vn[:-4]
             # Skip duplicate videos (e.g. 'lena_walk2.avi')
-            if vn[:-5] in duplicates and vn[-5] == '2':
+            if vn_no_ext[:-1] in duplicates and vn_no_ext[-1] == '2':
                 continue
             print("Converting {} to NPY...".format(vn))
             vid_path = os.path.join(dest, vn)
-            vid_data = skvideo.io.vread(vid_path)
+            vid_data = skvideo.io.vread(vid_path, outputdict=ffmpeg_params)
+            vid_data = crop_to_square(vid_data)
             # Rename original of duplicate pairs ('lena_walk1'->'lena_walk')
-            if vn[:-5] in duplicates:
-                vid_path = vid_path[:-5] + vid_path[-4:]
-            np.save(vid_path[:-3] + 'npy', vid_data)
+            if vn_no_ext[:-1] in duplicates:
+                vn_no_ext = vn_no_ext[:-1]
+            npy_path = os.path.join(dest, vn_no_ext + '.npy')
+            np.save(npy_path, vid_data)
 
+def crop_to_square(vid_in):
+    """Crop video ndarray to central square"""
+    height, width = vid_in.shape[1:3]
+    side = min(height, width)
+    x0 = (width - side)//2
+    y0 = (height - side)//2
+    vid_out = np.array(vid_in[:,y0:y0+side,x0:x0+side])
+    return vid_out
+            
 def test_dataset(data_dir='./weizmann', stats=False):
     print("Loading data...")
     dataset = WeizmannDataset(data_dir)
