@@ -104,6 +104,7 @@ def preprocess(video):
 def test_dataset(data_dir='./weizmann', stats=False):
     print("Loading data...")
     dataset = WeizmannDataset(data_dir)
+    print("Number of sequences:", len(dataset))
     print("Sequence ID values:")
     for s in dataset.seq_id_sets:
         print(s)

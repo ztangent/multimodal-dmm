@@ -208,19 +208,29 @@ class MultiseqDataset(Dataset):
         dataset.normalize_(modalities, method, ref_data)
         return dataset
             
-    def split_(self, n):
-        """Splits each sequence into n chunks (in place)."""
+    def split_(self, n, n_is_len=False):
+        """Splits each sequence into chunks (in place)."""
+        if n_is_len:
+            # Use n as maximum chunk length
+            split = [range(n, l, n) for l in self.lengths]
+        else:
+            # Use n as number of chunks
+            split = [n for l in self.lengths]
         for m in self.modalities:
             self.data[m] = list(itertools.chain.from_iterable(
-                [np.array_split(a, n, 0) for a in self.data[m]]))
-        self.seq_ids = list(itertools.chain.from_iterable(
-            [[i] * n for i in self.seq_ids]))
+                [np.array_split(a, s, 0) for a,s in zip(self.data[m], split)]))
+        if n_is_len:
+            self.seq_ids = list(itertools.chain.from_iterable(
+                [[i] * (len(s)+1) for i,s in zip(self.seq_ids, split)]))
+        else:
+            self.seq_ids = list(itertools.chain.from_iterable(
+                [[i] * n for i in self.seq_ids]))            
         self.lengths = [len(d) for d in self.data[self.modalities[0]]]
 
-    def split(self, n):
-        """Splits each sequence into n chunks (returns new dataset)."""
+    def split(self, n, n_is_len=False):
+        """Splits each sequence into chunks (returns new dataset)."""
         dataset = copy.deepcopy(self)
-        dataset.split_(n)
+        dataset.split_(n, n_is_len)
         return dataset
 
     def select(self, seq_ids, invert=False):

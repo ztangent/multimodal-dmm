@@ -231,7 +231,7 @@ def main(args):
 
     # Construct model
     dims = {'video': 4096}
-    dists = {'video': 'Bernoulli'}
+    dists = {'video': 'Normal'}
     if hasattr(models, args.model):
         constructor = getattr(models, args.model)
         image_encoder = models.common.ImageEncoder(z_dim=256)
@@ -289,7 +289,8 @@ def main(args):
         return
 
     # Split training data into chunks
-    train_data = train_data.split()
+    if args.split is not None:
+        train_data = train_data.split(args.split, n_is_len=True)
     # Batch data using data loaders
     train_loader = DataLoader(train_data, batch_size=args.batch_size,
                               shuffle=True, collate_fn=mseq.seq_collate_dict,
@@ -334,10 +335,10 @@ if __name__ == "__main__":
                         help='additional evaluation arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
-    parser.add_argument('--batch_size', type=int, default=20, metavar='N',
-                        help='input batch size for training (default: 20)')
-    parser.add_argument('--split', type=int, default=1, metavar='N',
-                        help='sections to split each video into (default: 1)')
+    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
+                        help='input batch size for training (default: 50)')
+    parser.add_argument('--split', type=int, default=25, metavar='K',
+                        help='split data into K-sized chunks (default: 25)')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
@@ -352,9 +353,9 @@ if __name__ == "__main__":
                         help='reconstruction loss multiplier (default: 1/dims')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
-    parser.add_argument('--burst_frac', type=float, default=0.1, metavar='F',
-                        help='burst error rate during training (default: 0.1)')
-    parser.add_argument('--drop_frac', type=float, default=0.25, metavar='F',
+    parser.add_argument('--burst_frac', type=float, default=0, metavar='F',
+                        help='burst error rate during training (default: 0)')
+    parser.add_argument('--drop_frac', type=float, default=0, metavar='F',
                         help='fraction of data to randomly drop at test time')
     parser.add_argument('--start_frac', type=float, default=0, metavar='F',
                         help='fraction of test trajectory to begin at')
