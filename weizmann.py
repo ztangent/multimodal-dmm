@@ -101,8 +101,8 @@ def evaluate(dataset, model, args, fig_path=None):
                    for m in out_mean.keys()])
         mse_loss.append(mse.mean().item())
     # Plot predictions against truth
-    # if args.visualize:
-    #     visualize(dataset, observed, predictions, mse_loss, args, fig_path)
+    if args.visualize:
+         visualize(dataset, observed, predictions, mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
@@ -112,47 +112,34 @@ def evaluate(dataset, model, args, fig_path=None):
           .format(kld_loss, rec_loss, mse_loss))
     return predictions, losses
 
-def visualize(dataset, observed, predictions, args, fig_path=None):
+def visualize(dataset, observed, predictions, metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
-    # Select top 4 and bottom 4
-    sel_idx = np.concatenate((np.argsort(metric)[:4],
-                              np.argsort(metric)[-4:][::-1]))
+    # Select best and worst predictions
+    sel_idx = np.concatenate((np.argsort(metric)[:1],
+                              np.argsort(metric)[-1:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
-    sel_truth = [dataset.orig['metadata'][i][:,0:2] for i in sel_idx]
-    sel_truth = [(arr[:,0], arr[:,1]) for arr in sel_truth]
-    sel_data = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
-                for i in sel_idx]
-    sel_obs = [(observed['spiral-x'][i], observed['spiral-y'][i])
-               for i in sel_idx]
-    sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
-                for i in sel_idx]
+    sel_truth = [dataset[i]['video'] for i in sel_idx]
+    sel_obs = [observed['video'][i] for i in sel_idx]
+    sel_pred = [predictions['video'][i] for i in sel_idx]
 
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
-        truth, data = sel_truth[i], sel_data[i]
-        obs, pred = sel_obs[i], sel_pred[i]
-        rng, m = sel_rng[i], sel_metric[i]
-        j, i = (i // 4), (i % 4)
-        args.axes[i,j].cla()
-        
-        # Plot ground truth
-        args.axes[i,j].plot(truth[0], truth[1], 'b-', linewidth=1)
-
-        # Plot observations (blue = both, magenta = x-only, yellow = y-only)
-        if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
-            args.axes[i,j].plot(obs[0], data[1], 'm.', markersize=1.5)
-            args.axes[i,j].plot(data[0], obs[1], 'y.', markersize=1.5)
-        args.axes[i,j].plot(obs[0], obs[1], 'b.', markersize=1.5)
-
-        # Plot predictions
-        args.axes[i,j].plot(pred[0], pred[1], 'g-', linewidth=1)
-        
-        # Set limits and title
-        args.axes[i,j].set_xlim(-5, 5)
-        args.axes[i,j].set_ylim(-5, 5)
-        args.axes[i,j].set_title("Metric = {:0.3f}".format(m))
-        
+        truth, obs, pred = sel_truth[i], sel_obs[i], sel_pred[i]
+        m = sel_metric[i]
+        # Plot start, end, and trisection points of each video
+        frames = [0, len(obs)//3, len(obs)-1-len(obs)//3, len(obs)-1]
+        for j, t in enumerate(frames):
+            # Plot observed image
+            args.axes[2*i,j].cla()
+            img = obs[t].transpose((1,2,0))
+            args.axes[2*i,j].imshow(img)
+            args.axes[2*i,j].set_title("Observed".format(m))
+            # Plot predicted image
+            args.axes[2*i+1,j].cla()
+            img = pred[t].transpose((1,2,0))
+            args.axes[2*i+1,j].imshow(img)
+            args.axes[2*i+1,j].set_title("Metric = {:0.3f}".format(m))
     plt.tight_layout()
     plt.draw()
     if fig_path is not None:
@@ -262,7 +249,7 @@ def main(args):
 
     # Create figure to visualize predictions
     if args.visualize:
-        args.fig, args.axes = plt.subplots(4, 2, figsize=(4,8),
+        args.fig, args.axes = plt.subplots(4, 4, figsize=(8,8),
                                            subplot_kw={'aspect': 'equal'})
         
     # Evaluate model if test flag is set
