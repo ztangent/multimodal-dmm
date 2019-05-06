@@ -66,6 +66,7 @@ class Conv(nn.Module):
             )
         else:
             self.net = self.conv
+        nn.init.xavier_uniform_(self.conv.weight)
 
     def forward(self, x):
         return self.net(x)
@@ -87,13 +88,14 @@ class Deconv(nn.Module):
             )
         else:
             self.net = self.deconv
+        nn.init.xavier_uniform_(self.deconv.weight)
 
     def forward(self, x):
         return self.net(x)
     
 class ImageEncoder(nn.Module):
     """Convolutional encoder for images."""
-    def __init__(self, z_dim, h_dim=256,
+    def __init__(self, z_dim,
                  img_size=64, n_channels=3, n_kernels=64, n_layers=3):
         super(ImageEncoder, self).__init__()
         self.feat_size = img_size // 2**n_layers
@@ -106,16 +108,21 @@ class ImageEncoder(nn.Module):
               [Conv(n_kernels // 2, n_kernels, last=True)])
         )
 
-        self.feat_to_z = GaussianMLP(self.feat_dim, z_dim, h_dim)
+        self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
+        self.feat_to_z_std = nn.Linear(self.feat_dim, z_dim)
 
+        nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
+        nn.init.xavier_uniform_(self.feat_to_z_std.weight)
+        
     def forward(self, x):
         feats = self.conv_stack(x)
-        z_mean, z_std = self.feat_to_z(feats.view(-1, self.feat_dim))
+        z_mean = self.feat_to_z_mean(feats.view(-1, self.feat_dim))
+        z_std = self.feat_to_z_std(feats.view(-1, self.feat_dim))
         return z_mean, z_std
 
 class ImageDecoder(nn.Module):
     """De-convolutional decoder for images."""
-    def __init__(self, z_dim, h_dim=256,
+    def __init__(self, z_dim,
                  img_size=64, n_channels=3, n_kernels=64, n_layers=3):
         super(ImageDecoder, self).__init__()
         self.feat_size = img_size // 2**n_layers
@@ -123,9 +130,8 @@ class ImageDecoder(nn.Module):
         self.feat_shape = (n_kernels, self.feat_size, self.feat_size)
 
         self.z_to_feat = nn.Sequential(
-            nn.Linear(z_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, self.feat_dim)
+            nn.Linear(z_dim, self.feat_dim),
+            nn.ReLU()
         )
 
         self.deconv_stack = nn.Sequential(
@@ -136,8 +142,74 @@ class ImageDecoder(nn.Module):
             )
         )
 
+        nn.init.xavier_uniform_(self.z_to_feat[0].weight)
+
     def forward(self, z):
         feats = self.z_to_feat(z).view(-1, *self.feat_shape)
         x_mean = self.deconv_stack(feats)
+        x_std = (x_mean * (1-x_mean)).pow(0.5)
+        return x_mean, x_std
+
+class ImageEncoderFC(nn.Module):
+    """Fully-connected encoder for images."""
+    def __init__(self, z_dim, h_dim=256, img_size=64, n_channels=3):
+        super(ImageEncoderFC, self).__init__()
+        self.img_dim = img_size * img_size * n_channels
+        self.feat_dim = h_dim
+
+        self.fc_stack = nn.Sequential(
+            nn.Linear(self.img_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU()
+        )
+
+        self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
+        self.feat_to_z_std = nn.Linear(self.feat_dim, z_dim)
+
+        nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
+        nn.init.xavier_uniform_(self.feat_to_z_std.weight)
+        for layer in self.fc_stack:
+            if type(layer) == nn.Linear:
+                nn.init.xavier_uniform_(layer.weight)
+        
+    def forward(self, x):
+        feats = self.fc_stack(x.view(-1, self.img_dim))
+        z_mean = self.feat_to_z_mean(feats.view(-1, self.feat_dim))
+        z_std = self.feat_to_z_std(feats.view(-1, self.feat_dim))
+        return z_mean, z_std
+
+class ImageDecoderFC(nn.Module):
+    """Fully-connected decoder for images."""
+    def __init__(self, z_dim, h_dim=256, img_size=64, n_channels=3):
+        super(ImageDecoderFC, self).__init__()
+        self.img_shape = (n_channels, img_size, img_size)
+        self.img_dim = img_size * img_size * n_channels
+        self.feat_dim = h_dim
+
+        self.fc_stack = nn.Sequential(
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, self.img_dim),
+            nn.Sigmoid()
+        )
+        
+        self.z_to_feat = nn.Sequential(
+            nn.Linear(z_dim, self.feat_dim),
+            nn.ReLU()
+        )
+
+        nn.init.xavier_uniform_(self.z_to_feat[0].weight)
+        for layer in self.fc_stack:
+            if type(layer) == nn.Linear:
+                nn.init.xavier_uniform_(layer.weight)
+
+    def forward(self, z):
+        feats = self.z_to_feat(z)
+        x_mean = self.fc_stack(feats).reshape(-1, *self.img_shape)
         x_std = (x_mean * (1-x_mean)).pow(0.5)
         return x_mean, x_std

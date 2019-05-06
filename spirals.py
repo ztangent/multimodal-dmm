@@ -266,7 +266,8 @@ def main(args):
                           for m in args.modalities}
         
     # Setup loss and optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(),
+                           lr=args.lr, weight_decay=args.w_decay)
 
     # Create path to save models/predictions
     if not os.path.exists(args.save_dir):
@@ -367,12 +368,14 @@ if __name__ == "__main__":
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
                         help='learning rate (default: 1e-4)')
+    parser.add_argument('--w_decay', type=float, default=1e-4, metavar='F',
+                        help='Adam weight decay (default: 1e-4)')
     parser.add_argument('--seed', type=int, default=1, metavar='N',
                         help='random seed (default: 1)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
                         help='max kld loss multiplier (default: 1.0)')
-    parser.add_argument('--rec_mults', type=float, default=None, nargs='+',
-                        help='reconstruction loss multiplier (default: 1/dims')
+    parser.add_argument('--rec_mults', type=yaml.load, default=None,
+                        help='reconstruction loss multiplier (default: 1/dim)')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
     parser.add_argument('--burst_frac', type=float, default=0.1, metavar='F',
