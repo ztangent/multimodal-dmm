@@ -138,9 +138,9 @@ class ImageDecoder(nn.Module):
         )
 
         self.deconv_stack = nn.Sequential(
-            *([Conv(n_kernels // 2**l, n_kernels // 2**(l+1))
+            *([Deconv(n_kernels // 2**l, n_kernels // 2**(l+1))
                for l in range(n_layers-1)] +
-              [Conv(n_kernels // 2**(n_layers-1), n_channels, last=True)] +
+              [Deconv(n_kernels // 2**(n_layers-1), n_channels, last=True)] +
               [nn.Sigmoid()]
             )
         )

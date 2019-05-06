@@ -225,8 +225,8 @@ def main(args):
     dists = {'video': 'Bernoulli'}
     if hasattr(models, args.model):
         constructor = getattr(models, args.model)
-        image_encoder = models.common.ImageEncoderFC(z_dim=256)
-        image_decoder = models.common.ImageDecoderFC(z_dim=256)
+        image_encoder = models.common.ImageEncoder(z_dim=256)
+        image_decoder = models.common.ImageDecoder(z_dim=256)
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],
                             dists=[dists[m] for m in args.modalities],
