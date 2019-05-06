@@ -460,7 +460,7 @@ if __name__ == "__main__":
                       device=torch.device('cpu'))
     model.eval()
     print("Passing a sample through the model...")
-    data, mask, lengths = seq_collate_dict([dataset[0]])
+    data, mask, lengths, order = seq_collate_dict([dataset[0]])
     infer, prior, outputs = model(data, lengths=lengths)
     out_mean, out_std = outputs
     print("Predicted:")

@@ -322,6 +322,8 @@ def seq_collate_dict(data, time_first=True):
     """Collate that accepts and returns dictionaries."""
     batch = {}
     modalities = [k for k in data[0].keys() if  k != 'length']
+    order = sorted(range(len(data)),
+                   key=lambda i: data[i]['length'], reverse=True)
     data.sort(key=lambda d: d['length'], reverse=True)
     lengths = [d['length'] for d in data]
     for m in modalities:
@@ -331,7 +333,7 @@ def seq_collate_dict(data, time_first=True):
     mask = len_to_mask(lengths)
     if time_first:
         mask = mask.transpose(0, 1)
-    return batch, mask, lengths
+    return batch, mask, lengths, order
 
 def rand_delete(batch_in, del_frac, modalities=None):
     """Introduce random memoryless errors / deletions into a data batch"""

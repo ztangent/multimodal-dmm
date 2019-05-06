@@ -30,7 +30,7 @@ def train(loader, model, optimizer, epoch, args):
     data_num = 0
     log_freq = len(loader) // args.log_freq
     rec_mults = dict(args.rec_mults)
-    for b_num, (targets, mask, lengths) in enumerate(loader):
+    for b_num, (targets, mask, lengths, _) in enumerate(loader):
         # Anneal KLD loss multipliers
         b_tot = b_num + epoch*len(loader)
         kld_mult =\
@@ -65,16 +65,14 @@ def train(loader, model, optimizer, epoch, args):
           format(epoch, loss, kld_mult))
     return loss
 
-def evaluate(dataset, model, args, fig_path=None):
+def evaluate(loader, model, args, fig_path=None):
     model.eval()
-    predictions = {m: [] for m in args.modalities}
-    observed = {m: [] for m in args.modalities}
-    ranges = {m: [] for m in args.modalities}
+    predictions = {m: [] for m in model.modalities}
+    observed = {m: [] for m in model.modalities}
+    ranges = {m: [] for m in model.modalities}
     data_num = 0
     kld_loss, rec_loss, mse_loss = [], [], []
-    for data in dataset:
-        # Collate data into batch dictionary of size 1
-        targets, mask, lengths = mseq.seq_collate_dict([data])
+    for b_num, (targets, mask, lengths, order) in enumerate(loader):
         # Send to device
         mask = mask.to(args.device)
         for m in targets.keys():
@@ -96,20 +94,30 @@ def evaluate(dataset, model, args, fig_path=None):
         # Store observations, predictions and confidence intervals
         out_mean, out_std = outputs
         for m in out_mean.keys():
-            observed[m].append(inputs[m].view(-1).cpu().numpy())
-            predictions[m].append(out_mean[m].view(-1).cpu().numpy())
-            ranges[m].append(1.96 * out_std[m].view(-1).cpu().numpy())
-        # Compute mean squared error over time
+            # Undo reordering done by collation
+            observed[m].append(inputs[m][:,order].cpu().numpy())
+            predictions[m].append(out_mean[m][:,order].cpu().numpy())
+            ranges[m].append(1.96 * out_std[m][:,order].cpu().numpy())
+        # Compute mean squared error for each timestep
         mse = sum([(out_mean[m]-targets[m]).pow(2) for m in out_mean.keys()])
-        mse_loss.append(mse.mean().item())
+        mse = mse.sum(dim=range(2, mse.dim()))
+        # Average across timesteps, for each sequence
+        mse[1 - mask.squeeze(-1)] = 0.0
+        mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
+        mse_loss += mse[order].tolist()
+    # Concatenate observations and predictions across batches
+    for m in model.modalities:
+        observed[m] = np.concatenate(observed[m], axis=1).swapaxes(0, 1)
+        predictions[m] = np.concatenate(predictions[m], axis=1).swapaxes(0, 1)
+        ranges[m] = np.concatenate(ranges[m], axis=1).swapaxes(0, 1)
     # Plot predictions against truth
     if args.visualize:
-        visualize(dataset, observed, predictions, ranges,
+        visualize(loader.dataset, observed, predictions, ranges,
                   mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
-    mse_loss = sum(mse_loss) / len(dataset)
+    mse_loss = sum(mse_loss) / len(loader.dataset)
     losses = kld_loss, rec_loss, mse_loss
     print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
           .format(kld_loss, rec_loss, mse_loss))
@@ -278,16 +286,26 @@ def main(args):
             os.makedirs(pred_train_dir)
         if not os.path.exists(pred_test_dir):
             os.makedirs(pred_test_dir)
-        # Evaluate on both training and test set
+            
+        # Evaluate on both training and test set        
+        print("--Training--")
+        eval_loader = DataLoader(train_data, batch_size=args.batch_size,
+                                 collate_fn=mseq.seq_collate_dict,
+                                 shuffle=False, pin_memory=True)
         with torch.no_grad():
-            print("--Training--")
-            pred, _  = evaluate(train_data, model, args,
+            pred, _  = evaluate(eval_loader, model, args,
                                 os.path.join(args.save_dir, "train.pdf"))
             # save_predictions(train_data, pred, pred_train_dir)
-            print("--Testing--")
-            pred, _  = evaluate(test_data, model, args,
+            
+        print("--Testing--")
+        eval_loader = DataLoader(test_data, batch_size=args.batch_size,
+                                 collate_fn=mseq.seq_collate_dict,
+                                 shuffle=False, pin_memory=True)
+        with torch.no_grad():
+            pred, _  = evaluate(eval_loader, model, args,
                                 os.path.join(args.save_dir, "test.pdf"))
             # save_predictions(test_data, pred, pred_test_dir)
+
         # Save command line flags, model params
         save_params(args, model)
         return
@@ -296,8 +314,11 @@ def main(args):
     train_data = train_data.split(args.split)
     # Batch data using data loaders
     train_loader = DataLoader(train_data, batch_size=args.batch_size,
-                              shuffle=True, collate_fn=mseq.seq_collate_dict,
-                              pin_memory=True)
+                              collate_fn=mseq.seq_collate_dict,
+                              shuffle=True, pin_memory=True)
+    test_loader = DataLoader(test_data, batch_size=args.batch_size,
+                             collate_fn=mseq.seq_collate_dict,
+                             shuffle=False, pin_memory=True)
    
     # Train and save best model
     best_loss = float('inf')
@@ -306,7 +327,7 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                pred, losses = evaluate(test_data, model, args)
+                pred, losses = evaluate(test_loader, model, args)
                 _, _, loss = losses
             if loss < best_loss:
                 best_loss = loss
