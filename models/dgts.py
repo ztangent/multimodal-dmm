@@ -8,6 +8,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class MultiDGTS(nn.Module):
     """Abstract base class for deep generative time series (DGTS) models."""
@@ -113,6 +114,8 @@ class MultiDGTS(nn.Module):
             if m not in inputs:
                 continue
             mult = 1.0 if m not in rec_mults else rec_mults[m]
+            if mult == 0:
+                continue
             if self.dists[m] == 'Bernoulli':
                 loss += mult * self._nll_bernoulli(out_mean[m],
                                                    inputs[m], mask)
@@ -137,14 +140,15 @@ class MultiDGTS(nn.Module):
         return kld
 
     def _nll_bernoulli(self, theta, x, mask=None):
-        nll_element = -(x*torch.log(theta) + (1-x)*torch.log(1-theta))
         if mask is None:
             mask = 1 - torch.isnan(x)
         else:
             shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
             mask = (1 - torch.isnan(x)) * mask.view(*shape)
-        nll_element = nll_element.masked_select(mask)
-        return torch.sum(nll_element)
+        theta = theta.masked_select(mask)
+        x = x.masked_select(mask)
+        nll = F.binary_cross_entropy(theta, x, reduction='sum')
+        return nll
 
     def _nll_gauss(self, mean, std, x, mask=None):
         if mask is None:

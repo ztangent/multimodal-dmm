@@ -303,7 +303,7 @@ def main(args):
     test_loader = DataLoader(test_data, batch_size=args.batch_size,
                              collate_fn=mseq.seq_collate_dict,
                              shuffle=False, pin_memory=True)
-   
+    
     # Train and save best model
     best_loss = float('inf')
     for epoch in range(1, args.epochs + 1):

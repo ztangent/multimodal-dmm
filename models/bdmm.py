@@ -417,7 +417,7 @@ class MultiBDMM(MultiDGTS):
         f_mode = kwargs.get('f_mode', 'bfilt')
         s_mode = kwargs.get('s_mode', 'fsmooth')
         f_mult, s_mult = kwargs.get('f_mult', 0.5), kwargs.get('s_mult', 0.5)
-        match_mult = kwargs.get('match_mult', 0.0)
+        match_mult = kwargs.get('match_mult', 0.01)
         train_particles = kwargs.get('train_particles', 25)
         match_particles = kwargs.get('match_particles', 50)
         t_max, b_dim = mask.shape[:2]

@@ -109,10 +109,13 @@ class ImageEncoder(nn.Module):
         )
 
         self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
-        self.feat_to_z_std = nn.Linear(self.feat_dim, z_dim)
+        self.feat_to_z_std = nn.Sequential(
+            nn.Linear(self.feat_dim, z_dim),
+            nn.Softplus()
+        )
 
         nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
-        nn.init.xavier_uniform_(self.feat_to_z_std.weight)
+        nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
         
     def forward(self, x):
         feats = self.conv_stack(x)
@@ -167,10 +170,13 @@ class ImageEncoderFC(nn.Module):
         )
 
         self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
-        self.feat_to_z_std = nn.Linear(self.feat_dim, z_dim)
+        self.feat_to_z_std = nn.Sequential(
+            nn.Linear(self.feat_dim, z_dim),
+            nn.Softplus()
+        )
 
         nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
-        nn.init.xavier_uniform_(self.feat_to_z_std.weight)
+        nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
         for layer in self.fc_stack:
             if type(layer) == nn.Linear:
                 nn.init.xavier_uniform_(layer.weight)
