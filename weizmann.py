@@ -89,12 +89,11 @@ def evaluate(loader, model, args, fig_path=None):
         rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
-        # Store observations, predictions and confidence intervals
+        # Decollate and store observations and predictions
         out_mean, out_std = outputs
         for m in out_mean.keys():
-            # Undo reordering done by collation
-            observed[m].append(inputs[m][:,order].cpu().numpy())
-            predictions[m].append(out_mean[m][:,order].cpu().numpy())
+            observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
+            predictions[m] += mseq.seq_decoll(out_mean[m], lengths, order)
         # Compute mean squared error for each timestep
         mse = sum([(out_mean[m] - targets[m]).pow(2) / out_mean[m][0,0].numel()
                    for m in out_mean.keys()])
@@ -103,10 +102,6 @@ def evaluate(loader, model, args, fig_path=None):
         mse[1 - mask.squeeze(-1)] = 0.0
         mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
         mse_loss += mse[order].tolist()
-    # Concatenate observations and predictions across batches
-    for m in model.modalities:
-        observed[m] = np.concatenate(observed[m], axis=1).swapaxes(0, 1)
-        predictions[m] = np.concatenate(predictions[m], axis=1).swapaxes(0, 1)
     # Plot predictions against truth
     if args.visualize:
          visualize(loader.dataset, observed, predictions,
@@ -136,7 +131,7 @@ def visualize(dataset, observed, predictions, metric, args, fig_path=None):
         truth, obs, pred = sel_truth[i], sel_obs[i], sel_pred[i]
         m = sel_metric[i]
         # Plot start, end, and trisection points of each video
-        t_max = len(truth)
+        t_max = len(obs)
         frames = [0, t_max//3, t_max-1 - t_max//3, t_max-1]
         for j, t in enumerate(frames):
             # Plot observed image
@@ -279,7 +274,7 @@ def main(args):
         print("--Training--")
         eval_loader = DataLoader(train_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=False)
         with torch.no_grad():
             pred, _  = evaluate(eval_loader, model, args,
                                 os.path.join(args.save_dir, "train.pdf"))
@@ -288,7 +283,7 @@ def main(args):
         print("--Testing--")
         eval_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=False)
         with torch.no_grad():
             pred, _  = evaluate(eval_loader, model, args,
                                 os.path.join(args.save_dir, "test.pdf"))

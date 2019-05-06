@@ -319,7 +319,7 @@ def seq_collate(data, time_first=True):
     return tuple(padded + [mask, lengths])
 
 def seq_collate_dict(data, time_first=True):
-    """Collate that accepts and returns dictionaries."""
+    """Collate that accepts and returns dictionaries of batch tensors."""
     batch = {}
     modalities = [k for k in data[0].keys() if  k != 'length']
     order = sorted(range(len(data)),
@@ -334,6 +334,19 @@ def seq_collate_dict(data, time_first=True):
     if time_first:
         mask = mask.transpose(0, 1)
     return batch, mask, lengths, order
+
+def seq_decoll(batch, lengths, order, time_first=True):
+    """Decollate batched data by de-padding and reordering."""
+    if time_first:
+        data = [batch[:lengths[idx],idx].cpu().numpy() for idx in order]
+    else:
+        data = [batch[idx,:lengths[idx]].cpu().numpy() for idx in order]
+    return data
+
+def seq_decoll_dict(batch_dict, lengths, order, time_first=True):
+    """Decollate dictionary of batch tensors into dictionary of lists"""
+    return {k: seq_decollate(batch, lengths, order, time_first)
+            for k, batch in batch_dict.iteritems()}
 
 def rand_delete(batch_in, del_frac, modalities=None):
     """Introduce random memoryless errors / deletions into a data batch"""

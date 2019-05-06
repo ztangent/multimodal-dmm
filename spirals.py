@@ -91,13 +91,12 @@ def evaluate(loader, model, args, fig_path=None):
         rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
-        # Store observations, predictions and confidence intervals
+        # Decollate and store observations and predictions
         out_mean, out_std = outputs
         for m in out_mean.keys():
-            # Undo reordering done by collation
-            observed[m].append(inputs[m][:,order].cpu().numpy())
-            predictions[m].append(out_mean[m][:,order].cpu().numpy())
-            ranges[m].append(1.96 * out_std[m][:,order].cpu().numpy())
+            observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
+            predictions[m] += mseq.seq_decoll(out_mean[m], lengths, order)
+            ranges[m] += mseq.seq_decoll(1.96 * out_std[m], lengths, order)
         # Compute mean squared error for each timestep
         mse = sum([(out_mean[m]-targets[m]).pow(2) for m in out_mean.keys()])
         mse = mse.sum(dim=range(2, mse.dim()))
@@ -105,11 +104,6 @@ def evaluate(loader, model, args, fig_path=None):
         mse[1 - mask.squeeze(-1)] = 0.0
         mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
         mse_loss += mse[order].tolist()
-    # Concatenate observations and predictions across batches
-    for m in model.modalities:
-        observed[m] = np.concatenate(observed[m], axis=1).swapaxes(0, 1)
-        predictions[m] = np.concatenate(predictions[m], axis=1).swapaxes(0, 1)
-        ranges[m] = np.concatenate(ranges[m], axis=1).swapaxes(0, 1)
     # Plot predictions against truth
     if args.visualize:
         visualize(loader.dataset, observed, predictions, ranges,
