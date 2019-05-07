@@ -348,8 +348,8 @@ def seq_decoll_dict(batch_dict, lengths, order, time_first=True):
     return {k: seq_decollate(batch, lengths, order, time_first)
             for k, batch in batch_dict.iteritems()}
 
-def rand_delete(batch_in, del_frac, modalities=None):
-    """Introduce random memoryless errors / deletions into a data batch"""
+def func_delete(batch_in, del_func, lengths=None, modalities=None):
+    """Use del_func to compute time indices to delete. Assumes time_first."""
     if modalities == None:
         modalities = batch_in.keys()
     batch_out = dict()
@@ -358,51 +358,39 @@ def rand_delete(batch_in, del_frac, modalities=None):
         if m not in modalities:
             continue
         t_max, b_dim = batch_in[m].shape[:2]
-        del_idx = np.random.choice(t_max, int(del_frac * t_max), False)
-        batch_out[m][del_idx] = float('nan')
-    return batch_out
-
-def burst_delete(batch_in, burst_frac, modalities=None):
-    """Introduce random burst errors / deletions into a data batch"""
-    if modalities == None:
-        modalities = batch_in.keys()
-    batch_out = dict()
-    for m in batch_in.keys():
-        batch_out[m] = torch.tensor(batch_in[m])
-        if m not in modalities:
-            continue
-        t_max, b_dim = batch_in[m].shape[:2]
-        burst_len = int(burst_frac * t_max)
+        if lengths == None:
+            lengths = [t_max] * b_dim
         for b in range(b_dim):
-            t_start = np.random.randint(t_max)
-            t_stop = min(t_start + burst_len, t_max)
-            batch_out[m][t_start:t_stop, b] = float('nan')
+            del_idx = del_func(lengths[b])
+            batch_out[m][del_idx, b] = float('nan')
     return batch_out
 
-def keep_segment(batch_in, t_start, t_stop, modalities=None):
-    """Delete all data outside of specified time segment [t_start, t_stop)."""
-    if modalities == None:
-        modalities = batch_in.keys()
-    batch_out = dict()
-    for m in batch_in.keys():
-        batch_out[m] = torch.tensor(batch_in[m])
-        if m not in modalities:
-            continue
-        t_max = batch_in[m].shape[0]
-        batch_out[m][range(0,t_start) + range(t_stop,t_max)] = float('nan')
-    return batch_out
+def rand_delete(batch_in, del_frac, lengths=None, modalities=None):
+    """Introduce random memoryless errors / deletions into a data batch"""
+    def del_func(length):
+        return np.random.choice(length, int(del_frac * length), False)
+    return func_delete(batch_in, del_func, lengths, modalities)
 
-def del_segment(batch_in, t_start, t_stop, modalities=None):
-    """Delete specified time segment [t_start, t_stop)."""
-    if modalities == None:
-        modalities = batch_in.keys()
-    batch_out = dict()
-    for m in batch_in.keys():
-        batch_out[m] = torch.tensor(batch_in[m])
-        if m not in modalities:
-            continue
-        t_max = batch_in[m].shape[0]
-        batch_out[m][t_start:t_stop] = float('nan')
-    return batch_out
+def burst_delete(batch_in, burst_frac, lengths=None, modalities=None):
+    """Introduce random burst errors / deletions into a data batch"""
+    def del_func(length):
+        t_start = np.random.randint(length)
+        t_stop = min(t_start + int(burst_frac * length), length)
+        return range(t_start, t_stop)
+    return func_delete(batch_in, del_func, lengths, modalities)
+
+def keep_segment(batch_in, f_start, f_stop, lengths=None, modalities=None):
+    """Delete all data outside of specified time fraction [f_start, f_stop)."""
+    def del_func(length):
+        t_start, t_stop = int(f_start * length), int(f_stop * length)
+        return range(0, t_start) + range(t_stop, length)
+    return func_delete(batch_in, del_func, lengths, modalities)
+
+def del_segment(batch_in, f_start, f_stop, lengths=None, modalities=None):
+    """Delete specified time fraction [f_start, f_stop)."""
+    def del_func(length):
+        t_start, t_stop = int(f_start * length), int(f_stop * length)
+        return range(t_start, t_stop)
+    return func_delete(batch_in, del_func, lengths, modalities)
     
         

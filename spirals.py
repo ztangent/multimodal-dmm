@@ -40,7 +40,7 @@ def train(loader, model, optimizer, epoch, args):
         for m in targets.keys():
             targets[m] = targets[m].to(args.device)
         # Introduce burst deletions to improve interpolation
-        inputs = mseq.burst_delete(targets, args.burst_frac)
+        inputs = mseq.burst_delete(targets, args.burst_frac, lengths)
         # Compute batch loss
         b_loss = model.step(inputs, mask, kld_mult, rec_mults, targets=targets,
                             lengths=lengths, **args.train_args)
@@ -78,11 +78,10 @@ def evaluate(loader, model, args, fig_path=None):
         for m in targets.keys():
             targets[m] = targets[m].to(args.device)
         # Randomly remove a fraction of observations to test robustness
-        inputs = mseq.rand_delete(targets, args.drop_frac)
+        inputs = mseq.rand_delete(targets, args.drop_frac, lengths)
         # Remove init/final fraction of observations to test extrapolation
-        t_start = int(args.start_frac * max(lengths))
-        t_stop = int(args.stop_frac * max(lengths))
-        inputs = mseq.keep_segment(inputs, t_start, t_stop)
+        inputs = mseq.keep_segment(inputs, args.start_frac,
+                                   args.stop_frac, lengths)
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, outputs = model(inputs, lengths=lengths, sample=False,
                                       **args.eval_args)
