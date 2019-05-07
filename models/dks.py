@@ -127,8 +127,8 @@ class MultiDKS(MultiDGTS):
         # Initialize list accumulators
         prior_mean, prior_std = [], []
         infer_mean, infer_std = [], []
-        out_mean = {m: [] for m in self.modalities}
-        out_std = {m: [] for m in self.modalities}
+        rec_mean = {m: [] for m in self.modalities}
+        rec_std = {m: [] for m in self.modalities}
 
         # Zero mask missing values and extract features
         feats, masks = dict(), dict()
@@ -191,25 +191,25 @@ class MultiDKS(MultiDGTS):
 
             # Decode sampled z to reconstruct inputs
             for m in self.modalities:
-                out_m_t = self.dec[m](z_t)
-                out_mean_m_t = self.dec_mean[m](out_m_t)
-                out_std_m_t = self.dec_std[m](out_m_t)
-                out_mean[m].append(out_mean_m_t)
-                out_std[m].append(out_std_m_t)
+                rec_m_t = self.dec[m](z_t)
+                rec_mean_m_t = self.dec_mean[m](rec_m_t)
+                rec_std_m_t = self.dec_std[m](rec_m_t)
+                rec_mean[m].append(rec_mean_m_t)
+                rec_std[m].append(rec_std_m_t)
 
         # Concatenate lists to tensors
         infer = (torch.stack(infer_mean), torch.stack(infer_std))
         prior = (torch.stack(prior_mean), torch.stack(prior_std))
         for m in self.modalities:
-            out_mean[m] = torch.stack(out_mean[m])
-            out_std[m] = torch.stack(out_std[m])
-        outputs = (out_mean, out_std)
+            rec_mean[m] = torch.stack(rec_mean[m])
+            rec_std[m] = torch.stack(rec_std[m])
+        recon = (rec_mean, rec_std)
 
-        return infer, prior, outputs
+        return infer, prior, recon
 
     def sample(self, batch_size, seq_len):
         """Generates a sequence of the input data by sampling."""
-        out_mean = {m: [] for m in self.modalities}
+        rec_mean = {m: [] for m in self.modalities}
 
         for t in range(seq_len):
             # Compute prior
@@ -226,14 +226,14 @@ class MultiDKS(MultiDGTS):
             
             # Decode sampled z to reconstruct inputs
             for m in self.modalities:
-                out_m_t = self.dec[m](z_t)
-                out_mean_m_t = self.dec_mean[m](out_m_t)
-                out_mean[m].append(out_mean_m_t)
+                rec_m_t = self.dec[m](z_t)
+                rec_mean_m_t = self.dec_mean[m](rec_m_t)
+                rec_mean[m].append(rec_mean_m_t)
 
         for m in self.modalities:
-            out_mean[m] = torch.stack(out_mean[m])
+            rec_mean[m] = torch.stack(rec_mean[m])
             
-        return out_mean
+        return rec_mean
 
 if __name__ == "__main__":
     # Test code by running 'python -m models.dks' from base directory
@@ -258,8 +258,8 @@ if __name__ == "__main__":
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths, order = seq_collate_dict([dataset[0]])
-    infer, prior, outputs = model(data, lengths=lengths)
-    out_mean, out_std = outputs
+    infer, prior, recon = model(data, lengths=lengths)
+    rec_mean, rec_std = recon
     print("Predicted:")
-    for x, y in zip(out_mean['spiral-x'], out_mean['spiral-y']):
+    for x, y in zip(rec_mean['spiral-x'], rec_mean['spiral-y']):
         print("{:+0.3f}, {:+0.3f}".format(x.item(), y.item()))

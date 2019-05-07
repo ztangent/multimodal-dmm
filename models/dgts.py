@@ -4,11 +4,10 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
-import math
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+from . import losses
 
 class MultiDGTS(nn.Module):
     """Abstract base class for deep generative time series (DGTS) models."""
@@ -74,22 +73,22 @@ class MultiDGTS(nn.Module):
         loss = 0
         # Compute negative ELBO loss for individual modalities
         for m in self.modalities:
-            infer, prior, outputs = self.forward({m : inputs[m]}, **kwargs)
-            loss += self.loss({m : targets[m]}, infer, prior, outputs, mask,
+            infer, prior, recon = self.forward({m : inputs[m]}, **kwargs)
+            loss += self.loss({m : targets[m]}, infer, prior, recon, mask,
                               kld_mult, rec_mults)
         # Compute negative ELBO loss for all modalities
         if len(self.modalities) > 1:
-            infer, prior, outputs = self.forward(inputs, **kwargs)
-            loss += self.loss(targets, infer, prior, outputs, mask,
+            infer, prior, recon = self.forward(inputs, **kwargs)
+            loss += self.loss(targets, infer, prior, recon, mask,
                               kld_mult, rec_mults)
         return loss
         
-    def loss(self, inputs, infer, prior, outputs, mask=1,
+    def loss(self, inputs, infer, prior, recon, mask=1,
              kld_mult=1.0, rec_mults={}, avg=False):
         """Computes weighted sum of KLD loss and reconstruction loss."""
         loss = 0.0
         loss += kld_mult * self.kld_loss(infer, prior, mask)
-        loss += self.rec_loss(inputs, outputs, mask, rec_mults)
+        loss += self.rec_loss(inputs, recon, mask, rec_mults)
         if avg:
             if type(mask) is torch.Tensor:
                 n_data = torch.sum(mask)
@@ -103,13 +102,13 @@ class MultiDGTS(nn.Module):
         """KLD loss between inferred and prior z."""
         infer_mean, infer_std = infer
         prior_mean, prior_std = prior
-        return self._kld_gauss(infer_mean, infer_std,
-                               prior_mean, prior_std, mask)
+        return losses.kld_gauss(infer_mean, infer_std,
+                                prior_mean, prior_std, mask)
 
-    def rec_loss(self, inputs, outputs, mask=None, rec_mults={}):
+    def rec_loss(self, inputs, recon, mask=None, rec_mults={}):
         """Input reconstruction loss."""
         loss = 0.0
-        out_mean, out_std = outputs
+        rec_mean, rec_std = recon
         for m in self.modalities:
             if m not in inputs:
                 continue
@@ -117,49 +116,14 @@ class MultiDGTS(nn.Module):
             if mult == 0:
                 continue
             if self.dists[m] == 'Bernoulli':
-                loss += mult * self._nll_bernoulli(out_mean[m],
-                                                   inputs[m], mask)
+                loss += mult * losses.nll_bernoulli(rec_mean[m],
+                                                    inputs[m], mask)
             else:
-                loss += mult * self._nll_gauss(out_mean[m], out_std[m],
-                                               inputs[m], mask)
+                loss += mult * losses.nll_gauss(rec_mean[m], rec_std[m],
+                                                inputs[m], mask)
         return loss
             
     def _sample_gauss(self, mean, std):
         """Use std to sample."""
         eps = torch.FloatTensor(std.size()).to(self.device).normal_()
         return eps.mul(std).add_(mean)
-
-    def _kld_gauss(self, mean_1, std_1, mean_2, std_2, mask=None):
-        """Use std to compute KLD"""
-        kld_element =  (2 * torch.log(std_2) - 2 * torch.log(std_1) + 
-            (std_1.pow(2) + (mean_1 - mean_2).pow(2)) /
-            std_2.pow(2) - 1)
-        if mask is not None:
-            kld_element = kld_element.masked_select(mask)
-        kld =  0.5 * torch.sum(kld_element)
-        return kld
-
-    def _nll_bernoulli(self, theta, x, mask=None):
-        if mask is None:
-            mask = 1 - torch.isnan(x)
-        else:
-            shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
-            mask = (1 - torch.isnan(x)) * mask.view(*shape)
-        theta = theta.masked_select(mask)
-        x = x.masked_select(mask)
-        nll = F.binary_cross_entropy(theta, x, reduction='sum')
-        return nll
-
-    def _nll_gauss(self, mean, std, x, mask=None):
-        if mask is None:
-            mask = 1 - torch.isnan(x)
-        else:
-            shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
-            mask = (1 - torch.isnan(x)) * mask.view(*shape)
-        x = torch.tensor(x)
-        x[torch.isnan(x)] = 0.0
-        nll_element = ( ((x-mean).pow(2)) / (2 * std.pow(2)) + std.log() +
-                        math.log(math.sqrt(2 * math.pi)) )
-        nll_element = nll_element.masked_select(mask)
-        nll = torch.sum(nll_element)
-        return(nll)

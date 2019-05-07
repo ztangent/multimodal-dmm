@@ -167,13 +167,13 @@ class MultiDMM(MultiDGTS):
            and latent dims D 
         """
         t_max, b_dim = z.shape[:2]
-        out_mean, out_std = dict(), dict()        
+        rec_mean, rec_std = dict(), dict()        
         for m in self.modalities:
-            out_mean_m, out_std_m = self.dec[m](z.view(-1, self.z_dim))
-            out_shape = [t_max, b_dim] + list(out_mean_m.shape[1:])
-            out_mean[m] = out_mean_m.reshape(*out_shape)
-            out_std[m] = out_std_m.reshape(*out_shape)
-        return out_mean, out_std
+            rec_mean_m, rec_std_m = self.dec[m](z.view(-1, self.z_dim))
+            rec_shape = [t_max, b_dim] + list(rec_mean_m.shape[1:])
+            rec_mean[m] = rec_mean_m.reshape(*rec_shape)
+            rec_std[m] = rec_std_m.reshape(*rec_shape)
+        return rec_mean, rec_std
 
     def z_sample(self, t_max, b_dim, sample=True):
         """Generates a sequence of latent variables."""
@@ -277,8 +277,8 @@ class MultiDMM(MultiDGTS):
     def sample(self, t_max, b_dim):
         """Generates a sequence of the input data by sampling."""
         z_mean, z_std = self.z_sample(t_max, b_dim, sample=True)
-        out_mean, out_std = self.decode(z_mean)
-        return out_mean, out_std
+        rec_mean, rec_std = self.decode(z_mean)
+        return rec_mean, rec_std
             
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
@@ -324,10 +324,10 @@ class MultiDMM(MultiDGTS):
                           n_particles=fwd_particles)
 
         # Decode sampled z to reconstruct inputs
-        out_mean, out_std = self.decode(samples)
-        outputs = (out_mean, out_std)
+        rec_mean, rec_std = self.decode(samples)
+        recon = (rec_mean, rec_std)
 
-        return infer, prior, outputs
+        return infer, prior, recon
 
 if __name__ == "__main__":
     # Test code by running 'python -m models.dmm' from base directory
@@ -352,8 +352,8 @@ if __name__ == "__main__":
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths, order = seq_collate_dict([dataset[0]])
-    infer, prior, outputs = model(data, lengths=lengths)
-    out_mean, out_std = outputs
+    infer, prior, recon = model(data, lengths=lengths)
+    rec_mean, rec_std = recon
     print("Predicted:")
-    for x, y in zip(out_mean['spiral-x'], out_mean['spiral-y']):
+    for x, y in zip(rec_mean['spiral-x'], rec_mean['spiral-y']):
         print("{:+0.3f}, {:+0.3f}".format(x.item(), y.item()))

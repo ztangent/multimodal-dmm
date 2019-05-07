@@ -135,8 +135,8 @@ class MultiVRNN(MultiDGTS):
         # Initialize list accumulators
         prior_mean, prior_std = [], []
         infer_mean, infer_std = [], []
-        out_mean = {m: [] for m in self.modalities}
-        out_std = {m: [] for m in self.modalities}
+        rec_mean = {m: [] for m in self.modalities}
+        rec_std = {m: [] for m in self.modalities}
         
         # Initialize hidden state
         h = self.h0.repeat(1, batch_size, 1)
@@ -196,20 +196,20 @@ class MultiVRNN(MultiDGTS):
             # Decode sampled z to reconstruct inputs
             dec_in_t = torch.cat([phi_zq_t, h[-1]], 1)
             for m in self.modalities:
-                out_mean_m_t, out_std_m_t = self.dec[m](dec_in_t)
-                out_mean[m].append(out_mean_m_t)
-                out_std[m].append(out_std_m_t)
+                rec_mean_m_t, rec_std_m_t = self.dec[m](dec_in_t)
+                rec_mean[m].append(rec_mean_m_t)
+                rec_std[m].append(rec_std_m_t)
 
             if self.recur_mode == 'use_inputs':
                 # Impute missing inputs then extract features
                 phi_x_t = []
                 for m in self.modalities:
                     if m not in inputs:
-                        input_m_t = out_mean[m][-1].detach()
+                        input_m_t = rec_mean[m][-1].detach()
                     else:
                         input_m_t = torch.tensor(inputs[m][t])
                         nan_mask = torch.isnan(input_m_t)
-                        input_m_t[nan_mask] = out_mean[m][-1][nan_mask]
+                        input_m_t[nan_mask] = rec_mean[m][-1][nan_mask]
                     phi_m_t = self.phi[m](input_m_t)
                     phi_x_t.append(phi_m_t)
                 phi_x_t = torch.cat(phi_x_t, 1)
@@ -226,16 +226,16 @@ class MultiVRNN(MultiDGTS):
         infer = (torch.stack(infer_mean), torch.stack(infer_std))
         prior = (torch.stack(prior_mean), torch.stack(prior_std))
         for m in self.modalities:
-            out_mean[m] = torch.stack(out_mean[m])
-            out_std[m] = torch.stack(out_std[m])
-        outputs = (out_mean, out_std)
+            rec_mean[m] = torch.stack(rec_mean[m])
+            rec_std[m] = torch.stack(rec_std[m])
+        recon = (rec_mean, rec_std)
 
-        return infer, prior, outputs
+        return infer, prior, recon
 
     def sample(self, batch_size, seq_len):
         """Generates a sequence of the input data by sampling."""
-        out_mean = {m: [] for m in self.modalities}
-        out_std = {m: [] for m in self.modalities}
+        rec_mean = {m: [] for m in self.modalities}
+        rec_std = {m: [] for m in self.modalities}
         h = self.h0.repeat(1, batch_size, 1)
 
         for t in range(seq_len):
@@ -253,15 +253,15 @@ class MultiVRNN(MultiDGTS):
             # Decode sampled z to reconstruct inputs
             dec_in_t = torch.cat([phi_z_t, h[-1]], 1)
             for m in self.modalities:
-                out_mean_m_t, out_std_m_t = self.dec[m](dec_in_t)
-                out_mean[m].append(out_mean_m_t)
-                out_std[m].append(out_std_m_t)
+                rec_mean_m_t, rec_std_m_t = self.dec[m](dec_in_t)
+                rec_mean[m].append(rec_mean_m_t)
+                rec_std[m].append(rec_std_m_t)
 
             if self.recur_mode == 'use_inputs':
                 # Extract features from reconstructions
                 phi_x_t = []
                 for m in self.modalities:
-                    phi_m_t = self.phi[m](out_mean[m][-1])
+                    phi_m_t = self.phi[m](rec_mean[m][-1])
                     phi_x_t.append(phi_m_t)
                 phi_x_t = torch.cat(phi_x_t, 1)
 
@@ -272,10 +272,10 @@ class MultiVRNN(MultiDGTS):
                 _, h = self.rnn(phi_z_t.unsqueeze(0), h)
 
         for m in self.modalities:
-            out_mean[m] = torch.stack(out_mean[m])
-            out_std[m] = torch.stack(out_std[m])
+            rec_mean[m] = torch.stack(rec_mean[m])
+            rec_std[m] = torch.stack(rec_std[m])
             
-        return out_mean, out_std
+        return rec_mean, rec_std
     
 if __name__ == "__main__":
     # Test code by running 'python -m models.vrnn' from base directory
@@ -300,8 +300,8 @@ if __name__ == "__main__":
     model.eval()
     print("Passing a sample through the model...")
     data, mask, lengths, order = seq_collate_dict([dataset[0]])
-    infer, prior, outputs = model(data, lengths=lengths)
-    out_mean, out_std = outputs
+    infer, prior, recon = model(data, lengths=lengths)
+    rec_mean, rec_std = recon
     print("Predicted:")
-    for x, y in zip(out_mean['spiral-x'], out_mean['spiral-y']):
+    for x, y in zip(rec_mean['spiral-x'], rec_mean['spiral-y']):
         print("{:+0.3f}, {:+0.3f}".format(x.item(), y.item()))
