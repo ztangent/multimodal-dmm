@@ -18,6 +18,7 @@ import torch.nn as nn
 
 from .common import GaussianMLP, GaussianGTF
 from .dgts import MultiDGTS
+from .losses import kld_gauss
 
 class MultiBDMM(MultiDGTS):
     def __init__(self, modalities, dims, dists=None,
@@ -397,7 +398,7 @@ class MultiBDMM(MultiDGTS):
         """Compute KL divergence between E[p(z_next|z)] and p(z)."""
         glb_mean, glb_std, _ = self.prior((1, 1, 1))
         nxt_mean, nxt_std = self.z_sample(1, 1, direction, True, n_particles)
-        loss = self._kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
+        loss = kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
         return loss
     
     def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
