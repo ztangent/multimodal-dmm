@@ -19,7 +19,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .common import GaussianMLP
+from . import common
 from .dgts import MultiDGTS
 
 class MultiVRNN(MultiDGTS):
@@ -81,7 +81,7 @@ class MultiVRNN(MultiDGTS):
         self.enc = nn.ModuleDict()
         # Default to MLP
         for m in self.modalities:
-            self.enc[m] = GaussianMLP(h_dim + h_dim, z_dim, h_dim)
+            self.enc[m] = common.GaussianMLP(h_dim+h_dim, z_dim, h_dim)
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
@@ -92,7 +92,7 @@ class MultiVRNN(MultiDGTS):
         self.dec = nn.ModuleDict()
         # Default to MLP
         for m in self.modalities:
-            self.dec[m] = GaussianMLP(h_dim + h_dim, self.dims[m], h_dim)
+            self.dec[m] = common.GaussianMLP(h_dim+h_dim, self.dims[m], h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:

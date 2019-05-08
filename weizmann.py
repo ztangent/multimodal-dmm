@@ -66,7 +66,8 @@ def train(loader, model, optimizer, epoch, args):
 
 def evaluate(loader, model, args, fig_path=None):
     model.eval()
-    predictions = {m: [] for m in args.modalities}
+    reference = {m: [] for m in args.modalities}
+    predicted = {m: [] for m in args.modalities}
     observed = {m: [] for m in args.modalities}
     data_num = 0
     kld_loss, rec_loss, mse_loss = [], [], []
@@ -80,6 +81,9 @@ def evaluate(loader, model, args, fig_path=None):
         # Remove init/final fraction of observations to test extrapolation
         inputs = mseq.keep_segment(inputs, args.start_frac,
                                    args.stop_frac, lengths)
+        # Remove specified modalities to test conditioned generation
+        for m in args.drop_mods:
+            inputs[m][:] = float('nan')
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, recon = model(inputs, lengths=lengths, sample=False,
                                     **args.eval_args)
@@ -90,11 +94,12 @@ def evaluate(loader, model, args, fig_path=None):
         data_num += sum(lengths)
         # Decollate and store observations and predictions
         for m in recon.keys():
+            reference[m] += mseq.seq_decoll(targets[m], lengths, order)
             observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
-            predictions[m] += mseq.seq_decoll(recon[m][0], lengths, order)
+            predicted[m] += mseq.seq_decoll(recon[m][0], lengths, order)
         # Compute mean squared error for each timestep
-        mse = sum([(recon[m][0]-targets[m]).pow(2) / recon[m][0][0,0].numel()
-                   for m in recon.keys()])
+        mse = ((recon['video'][0]-targets[m]).pow(2) /
+               recon['video'][0][0,0].numel() )
         mse = mse.sum(dim=range(2, mse.dim()))
         # Average across timesteps, for each sequence
         mse[1 - mask.squeeze(-1)] = 0.0
@@ -102,7 +107,7 @@ def evaluate(loader, model, args, fig_path=None):
         mse_loss += mse[order].tolist()
     # Plot predictions against truth
     if args.visualize:
-         visualize(loader.dataset, observed, predictions,
+         visualize(loader.dataset, reference, observed, predicted,
                    mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
@@ -111,37 +116,59 @@ def evaluate(loader, model, args, fig_path=None):
     losses = kld_loss, rec_loss, mse_loss
     print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
           .format(kld_loss, rec_loss, mse_loss))
-    return predictions, losses
+    return predicted, losses
 
-def visualize(dataset, observed, predictions, metric, args, fig_path=None):
+def visualize(dataset, reference, observed, predicted,
+              metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
     # Select best and worst predictions
     sel_idx = np.concatenate((np.argsort(metric)[:1],
                               np.argsort(metric)[-1:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
-    sel_truth = [dataset[i]['video'] for i in sel_idx]
-    sel_obs = [observed['video'][i] for i in sel_idx]
-    sel_pred = [predictions['video'][i] for i in sel_idx]
+    sel_true = [reference['video'][i] for i in sel_idx]
+    sel_obsv = [observed['video'][i] for i in sel_idx]
+    sel_pred = [predicted['video'][i] for i in sel_idx]
+
+    sel_true_act = [reference['action'][i] for i in sel_idx]
+    sel_pred_act = [predicted['action'][i] for i in sel_idx]
 
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
-        truth, obs, pred = sel_truth[i], sel_obs[i], sel_pred[i]
+        true, obsv, pred = sel_true[i], sel_obsv[i], sel_pred[i]
+        true_act, pred_act = sel_true_act[i], sel_pred_act[i]
         m = sel_metric[i]
         # Plot start, end, and trisection points of each video
-        t_max = len(obs)
+        t_max = len(obsv)
         frames = [0, t_max//3, t_max-1 - t_max//3, t_max-1]
         for j, t in enumerate(frames):
             # Plot observed image
-            args.axes[2*i,j].cla()
-            img = obs[t].transpose((1,2,0))
-            args.axes[2*i,j].imshow(img)
-            args.axes[2*i,j].set_title("Observed".format(m))
+            ax = args.axes[2*i, j]
+            ax.cla()
+            ax.set_xticks([], [])
+            ax.set_yticks([], [])
+            img = obsv[t].transpose((1,2,0))
+            ax.imshow(img)
+            act_name = dataset.seq_id_sets[1][int(true_act[t])]
+            ax.set_title("t = {}".format(t))
+            ax.set_xlabel("Act: {}".format(act_name))
+            if j == 0:
+                ax.set_ylabel("Observations")                
+
             # Plot predicted image
-            args.axes[2*i+1,j].cla()
+            ax = args.axes[2*i+1, j]
+            ax.cla()
+            ax.set_xticks([], [])
+            ax.set_yticks([], [])
             img = pred[t].transpose((1,2,0))
-            args.axes[2*i+1,j].imshow(img)
-            args.axes[2*i+1,j].set_title("Metric = {:0.3f}".format(m))
+            ax.imshow(img)
+            act_id, act_prob = np.argmax(pred_act[t]), np.max(pred_act[t])
+            act_name = dataset.seq_id_sets[1][act_id]
+            ax.set_title("t = {}".format(t))
+            ax.set_xlabel("Act: {} ({:0.2f})".format(act_name, act_prob))
+            if j == 0:
+                ax.set_ylabel("Reconstructions")
+            
     plt.tight_layout()
     plt.draw()
     if fig_path is not None:
@@ -210,7 +237,7 @@ def main(args):
         args.modalities = checkpoint['modalities']
     elif args.modalities is None:
         # Default to all if unspecified
-        args.modalities = ['video']
+        args.modalities = ['video', 'action']
 
     # Load data for specified modalities
     train_data, test_data = load_data(args.modalities, args)
@@ -219,8 +246,8 @@ def main(args):
     args.model = models.names.get(args.model, args.model)
 
     # Construct model
-    dims = {'video': 64 * 64}
-    dists = {'video': 'Bernoulli'}
+    dims = {'video': 64 * 64, 'action': 10}
+    dists = {'video': 'Bernoulli', 'action': 'Categorical'}
     if hasattr(models, args.model):
         constructor = getattr(models, args.model)
         image_encoder = models.common.ImageEncoder(z_dim=256)
@@ -255,8 +282,10 @@ def main(args):
 
     # Create figure to visualize predictions
     if args.visualize:
-        args.fig, args.axes = plt.subplots(4, 4, figsize=(8,8),
-                                           subplot_kw={'aspect': 'equal'})
+        args.fig, args.axes = plt.subplots(
+            nrows=4, ncols=4, figsize=(8,8),
+            subplot_kw={'aspect': 'equal'}
+        )
         
     # Evaluate model if test flag is set
     if args.test:
@@ -369,6 +398,8 @@ if __name__ == "__main__":
                         help='fraction of test trajectory to begin at')
     parser.add_argument('--stop_frac', type=float, default=1, metavar='F',
                         help='fraction of test trajectory to stop at')
+    parser.add_argument('--drop_mods', type=str, default=[], nargs='+',
+                        help='modalities to delete at test (default: none')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',

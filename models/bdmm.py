@@ -16,9 +16,8 @@ import math
 import torch
 import torch.nn as nn
 
-from .common import GaussianMLP, GaussianGTF
+from . import common, losses
 from .dgts import MultiDGTS
-from .losses import kld_gauss
 
 class MultiBDMM(MultiDGTS):
     def __init__(self, modalities, dims, dists=None,
@@ -33,7 +32,7 @@ class MultiBDMM(MultiDGTS):
         dims : list of int
             list of feature dimensions for each modality
         dists : list of str
-            list of distributions ('Normal' [default] or 'Bernoulli')
+            list of either 'Normal' [default], 'Bernoulli' or 'Categorical'
         encoders : list or dict of nn.Module
             list or dict of custom encoder modules for each modality
         decoders : list or dict of nn.Module
@@ -68,10 +67,16 @@ class MultiBDMM(MultiDGTS):
         self.enc = nn.ModuleDict()            
         # Default to MLP with single-layer feature extractor
         for m in self.modalities:
-            self.enc[m] = nn.Sequential(
-                nn.Linear(self.dims[m], h_dim),
-                nn.ReLU(),
-                GaussianMLP(h_dim, z_dim, h_dim))
+            if self.dists[m] == 'Categorical':
+                self.enc[m] = nn.Sequential(
+                    nn.Embedding(self.dims[m], h_dim),
+                    nn.ReLU(),
+                    common.GaussianMLP(h_dim, z_dim, h_dim))                
+            else:
+                self.enc[m] = nn.Sequential(
+                    nn.Linear(self.dims[m], h_dim),
+                    nn.ReLU(),
+                    common.GaussianMLP(h_dim, z_dim, h_dim))
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
@@ -82,7 +87,10 @@ class MultiBDMM(MultiDGTS):
         self.dec = nn.ModuleDict()
         # Default to MLP
         for m in self.modalities:
-            self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
+            if self.dists[m] == 'Categorical':
+                self.dec[m] = common.CategoricalMLP(z_dim, self.dims[m], h_dim)
+            else:
+                self.dec[m] = common.GaussianMLP(z_dim, self.dims[m], h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
@@ -92,8 +100,8 @@ class MultiBDMM(MultiDGTS):
         # State transitions q'(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         # Where q'(z|z_prev) = p(z|z_prev) / p(z) 
         self.trans = nn.ModuleDict()
-        self.trans['fwd'] = GaussianGTF(z_dim, h_dim, min_std=min_std)
-        self.trans['bwd'] = GaussianGTF(z_dim, h_dim, min_std=min_std)
+        self.trans['fwd'] = common.GaussianGTF(z_dim, h_dim, min_std=min_std)
+        self.trans['bwd'] = common.GaussianGTF(z_dim, h_dim, min_std=min_std)
 
         # Global prior on latent space
         self.z0_mean = nn.Parameter(z0_mean * torch.ones(1, z_dim))
@@ -136,6 +144,8 @@ class MultiBDMM(MultiDGTS):
             mask_m = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
             input_m = torch.tensor(inputs[m])
             input_m[torch.isnan(input_m)] = 0.0
+            if self.dists[m] == 'Categorical':
+                input_m = input_m.long()
             # Compute mean and std of latent z given modality m
             z_mean_m, z_std_m = self.enc[m](input_m.flatten(0,1))
             z_mean_m = z_mean_m.reshape(t_max, b_dim, -1)
@@ -397,7 +407,7 @@ class MultiBDMM(MultiDGTS):
         """Compute KL divergence between E[p(z_next|z)] and p(z)."""
         glb_mean, glb_std, _ = self.prior((1, 1, 1))
         nxt_mean, nxt_std = self.z_sample(1, 1, direction, True, n_particles)
-        loss = kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
+        loss = losses.kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
         return loss
     
     def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):

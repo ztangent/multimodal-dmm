@@ -58,10 +58,10 @@ def nll_categorical(probs, x, mask=None):
         shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
         mask = (1 - torch.isnan(x)) * mask.view(*shape)
     # Mask probs and reshape into correct format for F.nll_loss
-    probs = torch.stack([probs[:,:,k].masked_select(mask)
-                         for k in probs.shape[2]], dim=-1)
+    probs = torch.stack([probs[:,:,k:k+1].masked_select(mask)
+                         for k in range(probs.shape[2])], dim=-1)
     x = x.masked_select(mask)
-    nll = F.nll_loss(probs, x, reduction='sum')
+    nll = F.nll_loss(probs, x.long(), reduction='sum')
     return nll
 
 def nll_gauss(mean, std, x, mask=None):

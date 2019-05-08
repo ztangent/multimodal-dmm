@@ -16,7 +16,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .common import GaussianMLP, GaussianGTF
+from . import common
 from .dgts import MultiDGTS
 
 class MultiDMM(MultiDGTS):
@@ -32,7 +32,7 @@ class MultiDMM(MultiDGTS):
         dims : list of int
             list of feature dimensions for each modality
         dists : list of str
-            list of distributions ('Normal' [default] or 'Bernoulli')
+            list of either 'Normal' [default], 'Bernoulli' or 'Categorical'
         encoders : list or dict of nn.Module
             list or dict of custom encoder modules for each modality
         decoders : list or dict of nn.Module
@@ -65,10 +65,16 @@ class MultiDMM(MultiDGTS):
         self.enc = nn.ModuleDict()            
         # Default to MLP with single-layer feature extractor
         for m in self.modalities:
-            self.enc[m] = nn.Sequential(
-                nn.Linear(self.dims[m], h_dim),
-                nn.ReLU(),
-                GaussianMLP(h_dim, z_dim, h_dim))
+            if self.dists[m] == 'Categorical':
+                self.enc[m] = nn.Sequential(
+                    nn.Embedding(self.dims[m], h_dim),
+                    nn.ReLU(),
+                    common.GaussianMLP(h_dim, z_dim, h_dim))                
+            else:
+                self.enc[m] = nn.Sequential(
+                    nn.Linear(self.dims[m], h_dim),
+                    nn.ReLU(),
+                    common.GaussianMLP(h_dim, z_dim, h_dim))
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
@@ -79,7 +85,10 @@ class MultiDMM(MultiDGTS):
         self.dec = nn.ModuleDict()
         # Default to MLP
         for m in self.modalities:
-            self.dec[m] = GaussianMLP(z_dim, self.dims[m], h_dim)
+            if self.dists[m] == 'Categorical':
+                self.dec[m] = common.CategoricalMLP(z_dim, self.dims[m], h_dim)
+            else:
+                self.dec[m] = common.GaussianMLP(z_dim, self.dims[m], h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
@@ -87,11 +96,11 @@ class MultiDMM(MultiDGTS):
             self.dec.update(decoders)
 
         # Forward transition p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
-        self.fwd = GaussianGTF(z_dim, h_dim, min_std=1e-3)
+        self.fwd = common.GaussianGTF(z_dim, h_dim, min_std=1e-3)
 
         # Backwards transition q'(z|z_next) = N(mu(z_next), sigma(z_next))
         # Where p(z|z_next) = q'(z|z_next) * p(z)
-        self.bwd = GaussianGTF(z_dim, h_dim, min_std=1e-3)
+        self.bwd = common.GaussianGTF(z_dim, h_dim, min_std=1e-3)
 
         # Default number of sampling particles in backward pass
         self.bwd_particles = bwd_particles

@@ -5,6 +5,22 @@ from __future__ import absolute_import
 import torch
 import torch.nn as nn
 
+class CategoricalMLP(nn.Module):
+    """MLP from input to categorical output."""
+    def __init__(self, x_dim, y_dim, h_dim):
+        super(CategoricalMLP, self).__init__()
+        self.x_to_h = nn.Sequential(
+            nn.Linear(x_dim, h_dim),
+            nn.ReLU())
+        self.h_to_y = nn.Sequential(
+            nn.Linear(h_dim, y_dim),
+            nn.Softmax(dim=1))
+
+    def forward(self, x):
+        h = self.x_to_h(x)
+        probs = self.h_to_y(h)
+        return (probs,)
+
 class GaussianMLP(nn.Module):
     """MLP from input to Gaussian output parameters."""
     def __init__(self, x_dim, y_dim, h_dim):
@@ -21,22 +37,6 @@ class GaussianMLP(nn.Module):
         h = self.x_to_h(x)
         mean, std = self.h_to_y_mean(h), self.h_to_y_std(h)
         return mean, std
-
-class CategoricalMLP(nn.Module):
-    """MLP from input to categorical output."""
-    def __init__(self, x_dim, y_dim, h_dim):
-        super(CategoricalMLP, self).__init__()
-        self.x_to_h = nn.Sequential(
-            nn.Linear(x_dim, h_dim),
-            nn.ReLU())
-        self.h_to_y = nn.Sequential(
-            nn.Linear(h_dim, y_dim),
-            nn.Softmax())
-
-    def forward(self, x):
-        h = self.x_to_h(x)
-        probs = self.h_to_y(h)
-        return probs
     
 class GaussianGTF(nn.Module):
     """GRU-like latent space gated transition function (GTF)."""
@@ -165,6 +165,5 @@ class ImageDecoder(nn.Module):
 
     def forward(self, z):
         feats = self.z_to_feat(z).view(-1, *self.feat_shape)
-        x_mean = self.deconv_stack(feats)
-        x_std = (x_mean * (1-x_mean)).pow(0.5)
-        return x_mean, x_std
+        probs = self.deconv_stack(feats)
+        return (probs,)
