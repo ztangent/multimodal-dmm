@@ -20,6 +20,16 @@ def kld_gauss(mean_1, std_1, mean_2, std_2, mask=None):
     return kld
 
 def nll_bernoulli(theta, x, mask=None):
+    """Returns Bernoulli negative log-likelihood (summed across inputs).
+
+        theta : torch.tensor of shape (T, B, D, ...)
+            Probability of heads
+        x : torch.tensor of shape (T, B, D, ...)
+            Tensor of observations
+        mask : torch.tensor of shape (T, B)
+
+        Here, T = n_timesteps, B = batch_size, and (D, ...) are the input dims.
+    """
     if mask is None:
         mask = 1 - torch.isnan(x)
     else:
@@ -30,7 +40,40 @@ def nll_bernoulli(theta, x, mask=None):
     nll = F.binary_cross_entropy(theta, x, reduction='sum')
     return nll
 
+def nll_categorical(probs, x, mask=None):
+    """Returns categorical negative log-likelihood (summed across inputs).
+
+        probs : torch.tensor of shape (T, B, K, D, ...)
+            Probability of heads
+        x : torch.tensor of shape (T, B, D, ...)
+            Tensor of observed category labels (not one-hot).
+        mask : torch.tensor of shape (T, B)
+
+        Here, T = n_timesteps, B = batch_size, K = n_categories,
+        and (D, ...) are the input dims.
+    """
+    if mask is None:
+        mask = 1 - torch.isnan(x)
+    else:
+        shape = list(mask.shape) + [1] * (x.dim() - mask.dim())
+        mask = (1 - torch.isnan(x)) * mask.view(*shape)
+    # Mask probs and reshape into correct format for F.nll_loss
+    probs = torch.stack([probs[:,:,k].masked_select(mask)
+                         for k in probs.shape[2]], dim=-1)
+    x = x.masked_select(mask)
+    nll = F.nll_loss(probs, x, reduction='sum')
+    return nll
+
 def nll_gauss(mean, std, x, mask=None):
+    """Returns Gaussian negative log-likelihood (summed across inputs).
+
+        mean : torch.tensor of shape (T, B, D, ...)
+        std : torch.tensor of shape (T, B, D, ...)
+        x : torch.tensor of shape (T, B, D, ...)
+        mask : torch.tensor of shape (T, B)
+
+        Here, T = n_timesteps, B = batch_size, and (D, ...) are the input dims.
+    """
     if mask is None:
         mask = 1 - torch.isnan(x)
     else:

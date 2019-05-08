@@ -83,21 +83,20 @@ def evaluate(loader, model, args, fig_path=None):
         inputs = mseq.keep_segment(inputs, args.start_frac,
                                    args.stop_frac, lengths)
         # Run forward pass using all modalities, get MAP estimate
-        infer, prior, outputs = model(inputs, lengths=lengths, sample=False,
-                                      **args.eval_args)
+        infer, prior, recon = model(inputs, lengths=lengths, sample=False,
+                                    **args.eval_args)
         # Compute and store KLD and reconstruction losses
         kld_loss.append(model.kld_loss(infer, prior, mask))
-        rec_loss.append(model.rec_loss(targets, outputs, mask, args.rec_mults))
+        rec_loss.append(model.rec_loss(targets, recon, mask, args.rec_mults))
         # Keep track of total number of time-points
         data_num += sum(lengths)
         # Decollate and store observations and predictions
-        out_mean, out_std = outputs
-        for m in out_mean.keys():
+        for m in recon.keys():
             observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
-            predictions[m] += mseq.seq_decoll(out_mean[m], lengths, order)
-            ranges[m] += mseq.seq_decoll(1.96 * out_std[m], lengths, order)
+            predictions[m] += mseq.seq_decoll(recon[m][0], lengths, order)
+            ranges[m] += mseq.seq_decoll(1.96 * recon[m][1], lengths, order)
         # Compute mean squared error for each timestep
-        mse = sum([(out_mean[m]-targets[m]).pow(2) for m in out_mean.keys()])
+        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
         mse = mse.sum(dim=range(2, mse.dim()))
         # Average across timesteps, for each sequence
         mse[1 - mask.squeeze(-1)] = 0.0

@@ -47,7 +47,7 @@ class MultiDGTS(nn.Module):
 
         mean : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims
-        var : torch.tensor
+        std : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims
         mask : torch.tensor
             (M, B) for M experts and batch size B
@@ -108,7 +108,6 @@ class MultiDGTS(nn.Module):
     def rec_loss(self, inputs, recon, mask=None, rec_mults={}):
         """Input reconstruction loss."""
         loss = 0.0
-        rec_mean, rec_std = recon
         for m in self.modalities:
             if m not in inputs:
                 continue
@@ -116,10 +115,16 @@ class MultiDGTS(nn.Module):
             if mult == 0:
                 continue
             if self.dists[m] == 'Bernoulli':
-                loss += mult * losses.nll_bernoulli(rec_mean[m],
+                rec_prob = recon[m][0]
+                loss += mult * losses.nll_bernoulli(rec_prob,
                                                     inputs[m], mask)
-            else:
-                loss += mult * losses.nll_gauss(rec_mean[m], rec_std[m],
+            elif self.dists[m] == 'Categorical':
+                rec_probs = recon[m][0]
+                loss += mult * losses.nll_categorical(rec_probs,
+                                                      inputs[m], mask)
+            elif self.dists[m] == 'Normal':
+                rec_mean, rec_std = recon[m]
+                loss += mult * losses.nll_gauss(rec_mean, rec_std,
                                                 inputs[m], mask)
         return loss
             

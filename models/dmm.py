@@ -163,17 +163,16 @@ class MultiDMM(MultiDGTS):
         """Decode from latent space to inputs.
 
         z : torch.tensor
-           tensor of shape (T, B, D) for max sequence length T, batch size B
-           and latent dims D 
+           shape is (T, B, D) for T timesteps, B batch dims, D latent dims
         """
         t_max, b_dim = z.shape[:2]
-        rec_mean, rec_std = dict(), dict()        
+        recon = dict()
         for m in self.modalities:
-            rec_mean_m, rec_std_m = self.dec[m](z.view(-1, self.z_dim))
-            rec_shape = [t_max, b_dim] + list(rec_mean_m.shape[1:])
-            rec_mean[m] = rec_mean_m.reshape(*rec_shape)
-            rec_std[m] = rec_std_m.reshape(*rec_shape)
-        return rec_mean, rec_std
+            recon_m = self.dec[m](z.view(-1, self.z_dim))
+            rec_shape = [t_max, b_dim] + list(recon_m[0].shape[1:])
+            # Reshape each output parameter (e.g. mean, std) to (T, B, ...)
+            recon[m] = tuple(r.reshape(*rec_shape) for r in recon_m)
+        return recon
 
     def z_sample(self, t_max, b_dim, sample=True):
         """Generates a sequence of latent variables."""
@@ -277,8 +276,8 @@ class MultiDMM(MultiDGTS):
     def sample(self, t_max, b_dim):
         """Generates a sequence of the input data by sampling."""
         z_mean, z_std = self.z_sample(t_max, b_dim, sample=True)
-        rec_mean, rec_std = self.decode(z_mean)
-        return rec_mean, rec_std
+        recon = self.decode(z_mean)
+        return recon
             
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
@@ -324,8 +323,7 @@ class MultiDMM(MultiDGTS):
                           n_particles=fwd_particles)
 
         # Decode sampled z to reconstruct inputs
-        rec_mean, rec_std = self.decode(samples)
-        recon = (rec_mean, rec_std)
+        recon = self.decode(samples)
 
         return infer, prior, recon
 
