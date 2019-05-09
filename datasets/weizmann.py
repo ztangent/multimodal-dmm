@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os, sys
+from collections import OrderedDict
 
 import numpy as np
 import skvideo.io
@@ -24,6 +25,7 @@ actions = {
     'wave1' : 'One-hand wave',
     'wave2' : 'Two-hands wave'
 }
+actions = OrderedDict(sorted(actions.items(), key=lambda t: t[0]))
 
 duplicates = ['lena_walk', 'lena_run', 'lena_skip']
 
@@ -58,8 +60,9 @@ def download_weizmann(dest='./weizmann'):
         print("Downloading '{}'...".format(filename))
         urlretrieve(source + filename, dest + filename, reporthook=progress)
 
-    # Use FFMPEG to downsample the video from 180X144 to 80x64
-    ffmpeg_params = {'-s': '80x64'}
+    # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
+    ffmpeg_params = {'-s': '64x64',
+                     '-vf': 'crop=128:128:26:8'}
 
     import zipfile
     for act in actions.keys():
