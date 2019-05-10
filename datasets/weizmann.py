@@ -51,13 +51,16 @@ def download_weizmann(dest='./weizmann'):
 
     def download(filename, source, dest):
         print("Downloading '{}'...".format(filename))
-        urlretrieve(source + filename, dest + filename, reporthook=progress)
+        urlretrieve(source + filename, os.path.join(dest, filename),
+                    reporthook=progress)
 
     # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
     ffmpeg_params = {'-s': '64x64',
                      '-vf': 'crop=128:128:26:8'}
 
     import zipfile
+    if not os.path.exists(dest):
+        os.mkdir(dest)
     for act in actions:
         zip_path = os.path.join(dest, act + '.zip')
         if not os.path.exists(zip_path):
