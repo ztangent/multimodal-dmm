@@ -199,9 +199,14 @@ def save_results(reference, predicted, args):
         vwriter = cv.VideoWriter(path, 0, 25.0, video.shape[1:3])
 
         # Iterate over frames
-        for frame in video:
+        for t, frame in enumerate(video):
             frame = (frame * 255).astype('uint8')
             frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
+            if 'action' in predicted:
+                act_probs = predicted['action'][i][t]
+                act_str = weizmann.actions[np.argmax(act_probs)]
+                cv.putText(frame, act_str, (0, 15), cv.FONT_HERSHEY_SIMPLEX,
+                           0.5, (255, 255, 255), 1, cv.LINE_AA)
             vwriter.write(frame)
         vwriter.release()
 
