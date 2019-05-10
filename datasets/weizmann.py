@@ -3,7 +3,6 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os, sys
-from collections import OrderedDict
 
 import numpy as np
 import skvideo.io
@@ -13,19 +12,13 @@ if __name__ == '__main__':
 else:
     from .multiseq import MultiseqDataset, seq_collate
 
-actions = {
-    'bend'  : 'Bend',
-    'jack'  : 'Jumping jack',
-    'jump'  : 'Jump',
-    'pjump' : 'Jump in place',
-    'run'   : 'Run',
-    'side'  : 'Gallop sideways',
-    'skip'  : 'Skip',
-    'walk'  : 'Walk',
-    'wave1' : 'One-hand wave',
-    'wave2' : 'Two-hands wave'
-}
-actions = OrderedDict(sorted(actions.items(), key=lambda t: t[0]))
+persons = ['daria', 'denis', 'eli', 'ido', 'ira',
+           'lena', 'lyova', 'moshe', 'shahar']
+actions = ['bend', 'jack', 'jump', 'pjump', 'run',
+           'side', 'skip', 'walk', 'wave1', 'wave2']
+descriptions = ['Bend', 'Jumping jack', 'Jump',
+                'Jump in place', 'Run' 'Gallop sideways',
+                'Skip', 'Walk', 'One-hand wave', 'Two-hand wave']
 
 duplicates = ['lena_walk', 'lena_run', 'lena_skip']
 
@@ -65,7 +58,7 @@ def download_weizmann(dest='./weizmann'):
                      '-vf': 'crop=128:128:26:8'}
 
     import zipfile
-    for act in actions.keys():
+    for act in actions:
         zip_path = os.path.join(dest, act + '.zip')
         if not os.path.exists(zip_path):
             download(act + '.zip', source=src_url, dest=dest)

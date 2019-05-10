@@ -11,14 +11,16 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
+import cv2 as cv
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+
 from datasets import multiseq as mseq
-from datasets.weizmann import WeizmannDataset
+from datasets import weizmann
 
 import models
 from utils import eval_ccc, anneal, plot_grad_flow
@@ -66,7 +68,7 @@ def train(loader, model, optimizer, epoch, args):
 
 def evaluate(loader, model, args, fig_path=None):
     model.eval()
-    reference = {m: [] for m in args.modalities}
+    reference = {m: [] for m in loader.dataset.modalities}
     predicted = {m: [] for m in args.modalities}
     observed = {m: [] for m in args.modalities}
     data_num = 0
@@ -93,8 +95,9 @@ def evaluate(loader, model, args, fig_path=None):
         # Keep track of total number of time-points
         data_num += sum(lengths)
         # Decollate and store observations and predictions
-        for m in recon.keys():
+        for m in targets.keys():
             reference[m] += mseq.seq_decoll(targets[m], lengths, order)
+        for m in recon.keys():
             observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
             predicted[m] += mseq.seq_decoll(recon[m][0], lengths, order)
         # Compute mean squared error for each timestep
@@ -107,8 +110,7 @@ def evaluate(loader, model, args, fig_path=None):
         mse_loss += mse[order].tolist()
     # Plot predictions against truth
     if args.visualize:
-         visualize(loader.dataset, reference, observed, predicted,
-                   mse_loss, args, fig_path)
+         visualize(reference, observed, predicted, mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
@@ -116,9 +118,9 @@ def evaluate(loader, model, args, fig_path=None):
     losses = kld_loss, rec_loss, mse_loss
     print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
           .format(kld_loss, rec_loss, mse_loss))
-    return predicted, losses
+    return reference, predicted, losses
 
-def visualize(dataset, reference, observed, predicted,
+def visualize(reference, observed, predicted,
               metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
     # Select best and worst predictions
@@ -130,7 +132,10 @@ def visualize(dataset, reference, observed, predicted,
     sel_pred = [predicted['video'][i] for i in sel_idx]
 
     sel_true_act = [reference['action'][i] for i in sel_idx]
-    sel_pred_act = [predicted['action'][i] for i in sel_idx]
+    if 'action' in predicted.keys():
+        sel_pred_act = [predicted['action'][i] for i in sel_idx]
+    else:
+        sel_pred_act = [None] * len(sel_idx)
 
     # Set current figure
     plt.figure(args.fig.number)
@@ -149,7 +154,7 @@ def visualize(dataset, reference, observed, predicted,
             ax.set_yticks([], [])
             img = obsv[t].transpose((1,2,0))
             ax.imshow(img)
-            act_name = dataset.seq_id_sets[1][int(true_act[t])]
+            act_name = weizmann.actions[int(true_act[t])]
             ax.set_title("t = {}".format(t))
             ax.set_xlabel("Act: {}".format(act_name))
             if j == 0:
@@ -162,8 +167,11 @@ def visualize(dataset, reference, observed, predicted,
             ax.set_yticks([], [])
             img = pred[t].transpose((1,2,0))
             ax.imshow(img)
-            act_id, act_prob = np.argmax(pred_act[t]), np.max(pred_act[t])
-            act_name = dataset.seq_id_sets[1][act_id]
+            if pred_act is None:
+                act_name, act_prob = 'N/A', float('nan')
+            else:
+                act_id, act_prob = np.argmax(pred_act[t]), np.max(pred_act[t])
+                act_name = weizmann.actions[act_id]
             ax.set_title("t = {}".format(t))
             ax.set_xlabel("Act: {} ({:0.2f})".format(act_name, act_prob))
             if j == 0:
@@ -174,6 +182,28 @@ def visualize(dataset, reference, observed, predicted,
     if fig_path is not None:
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
+
+def save_results(reference, predicted, args):
+    """Save results to video."""
+    print("Saving results...")
+    
+    for i, video in enumerate(predicted['video']):
+        # Tranpose video to T * H * W * C
+        video = video.transpose((0,2,3,1))
+        # Construct file name as [person]_[action].avi
+        p_id, a_id = reference['person'][i][0], reference['action'][i][0]
+        person = weizmann.persons[int(p_id)]
+        action = weizmann.actions[int(a_id)]
+        path = os.path.join(args.save_dir, '{}_{}.avi'.format(person, action))
+        # Create video writer for uncompressed 25 fps video
+        vwriter = cv.VideoWriter(path, 0, 25.0, video.shape[1:3])
+
+        # Iterate over frames
+        for frame in video:
+            frame = (frame * 255).astype('uint8')
+            frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
+            vwriter.write(frame)
+        vwriter.release()
 
 def save_params(args, model):
     fname = 'param_hist.tsv'
@@ -198,7 +228,7 @@ def load_checkpoint(path, device):
 def load_data(modalities, args):
     print("Loading data...")
     data_dir = os.path.abspath(args.data_dir)
-    all_data = WeizmannDataset(data_dir, item_as_dict=True)
+    all_data = weizmann.WeizmannDataset(data_dir, item_as_dict=True)
     all_persons = all_data.seq_id_sets[0]
     # Leave one person out of training set
     train_data = all_data.select([['shahar'], None], invert=True)
@@ -303,18 +333,18 @@ def main(args):
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            pred, _  = evaluate(eval_loader, model, args,
-                                os.path.join(args.save_dir, "train.pdf"))
-            # save_predictions(train_data, pred, pred_train_dir)
+            ref, pred, _  = evaluate(eval_loader, model, args,
+                                     os.path.join(args.save_dir, "train.pdf"))
+            save_results(ref, pred, args)
             
         print("--Testing--")
         eval_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            pred, _  = evaluate(eval_loader, model, args,
-                                os.path.join(args.save_dir, "test.pdf"))
-            # save_predictions(test_data, pred, pred_test_dir)
+            ref, pred, _  = evaluate(eval_loader, model, args,
+                                     os.path.join(args.save_dir, "test.pdf"))
+            save_results(ref, pred, args)
 
         # Save command line flags, model params
         save_params(args, model)
@@ -338,7 +368,7 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                pred, losses = evaluate(test_loader, model, args)
+                ref, pred, losses = evaluate(test_loader, model, args)
                 _, _, loss = losses
             if loss < best_loss:
                 best_loss = loss
