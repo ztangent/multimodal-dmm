@@ -374,14 +374,14 @@ class MultiBDMM(MultiDGTS):
         smt_particles = kwargs.get('smt_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
 
-        # Define helper function to prepend tensors
-        cons = lambda x, y : torch.cat([x.unsqueeze(0), y], dim=0)
+        # Helper function to append tuple of 3D tensors to 4D tensor
+        cons = lambda a, b : torch.stack(a.unbind(0) + b, dim=0)
         
         # Infer z_t from x_t without temporal information
         obs_mean, obs_std, obs_mask = self.encode(inputs)
         
         # Filtering pass
-        direction = 'fwd' if mode in ['ffilt', 'bsmooth'] else 'bwd'
+        direction = 'fwd' if mode in ['ffilter', 'bsmooth'] else 'bwd'
         infer, prior, z_samples = \
             self.z_filter(obs_mean, obs_std, obs_mask, direction=direction,
                           sample=sample, n_particles=flt_particles)
@@ -389,13 +389,19 @@ class MultiBDMM(MultiDGTS):
         # Smoothing pass
         if mode in ['fsmooth', 'bsmooth']:
             direction = 'fwd' if mode == 'fsmooth' else 'bwd'
+            # Introduce [p(z_t)]^-1 into the product of Gaussians
+            inv_mean, inv_std, inv_mask = self.prior((t_max, b_dim, 1))
+            inv_std = -inv_std
+            # Collect p(z_t|x_{t+1:T}) from output of filtering pass
             flt_mean, flt_std = prior
             flt_mask =\
                 torch.ones((t_max, b_dim), dtype=torch.uint8).to(self.device)
             flt_mask[-1] = 0 * flt_mask[-1]
             infer, prior, z_samples = \
-                self.z_filter(cons(flt_mean, obs_mean), cons(flt_std, obs_std),
-                              cons(flt_mask, obs_mask), direction=direction,
+                self.z_filter(cons(obs_mean, (flt_mean, inv_mean)),
+                              cons(obs_std, (flt_std, inv_std)),
+                              cons(obs_mask, (flt_mask, inv_mask)),
+                              direction=direction,
                               sample=sample, n_particles=smt_particles)
 
         # Decode sampled z to reconstruct inputs
@@ -414,7 +420,7 @@ class MultiBDMM(MultiDGTS):
         """Custom training step for bidirectional training paradigm.
         Additional keyword arguments:
 
-        f_mode : 'ffilt' or 'bfilt' (default)
+        f_mode : 'ffilter' or 'bfilter' (default)
             mode when computing filtering loss
         s_mode : 'fsmooth' (default) or 'bsmooth'
             mode when computing smoothing loss
@@ -424,7 +430,7 @@ class MultiBDMM(MultiDGTS):
             how much to weight smoothing loss (default : 0.5)
         """
         # Extract arguments
-        f_mode = kwargs.get('f_mode', 'bfilt')
+        f_mode = kwargs.get('f_mode', 'bfilter')
         s_mode = kwargs.get('s_mode', 'fsmooth')
         f_mult, s_mult = kwargs.get('f_mult', 0.5), kwargs.get('s_mult', 0.5)
         match_mult = kwargs.get('match_mult', 0.01)
