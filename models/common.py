@@ -7,37 +7,37 @@ import torch.nn as nn
 
 class CategoricalMLP(nn.Module):
     """MLP from input to categorical output."""
-    def __init__(self, x_dim, y_dim, h_dim):
+    def __init__(self, in_dim, out_dim, h_dim):
         super(CategoricalMLP, self).__init__()
-        self.x_to_h = nn.Sequential(
-            nn.Linear(x_dim, h_dim),
+        self.in_to_h = nn.Sequential(
+            nn.Linear(in_dim, h_dim),
             nn.ReLU())
-        self.h_to_y = nn.Sequential(
-            nn.Linear(h_dim, y_dim),
+        self.h_to_out = nn.Sequential(
+            nn.Linear(h_dim, out_dim),
             nn.Softmax(dim=1))
 
     def forward(self, x):
-        h = self.x_to_h(x)
-        probs = self.h_to_y(h)
+        h = self.in_to_h(x)
+        probs = self.h_to_out(h)
         return (probs,)
 
 class GaussianMLP(nn.Module):
     """MLP from input to Gaussian output parameters."""
-    def __init__(self, x_dim, y_dim, h_dim):
+    def __init__(self, in_dim, out_dim, h_dim):
         super(GaussianMLP, self).__init__()
-        self.x_to_h = nn.Sequential(
-            nn.Linear(x_dim, h_dim),
+        self.in_to_h = nn.Sequential(
+            nn.Linear(in_dim, h_dim),
             nn.ReLU())
-        self.h_to_y_mean = nn.Linear(h_dim, y_dim)
-        self.h_to_y_std = nn.Sequential(
-            nn.Linear(h_dim, y_dim),
+        self.h_to_mean = nn.Linear(h_dim, out_dim)
+        self.h_to_std = nn.Sequential(
+            nn.Linear(h_dim, out_dim),
             nn.Softplus())
 
     def forward(self, x):
-        h = self.x_to_h(x)
-        mean, std = self.h_to_y_mean(h), self.h_to_y_std(h)
+        h = self.in_to_h(x)
+        mean, std = self.h_to_mean(h), self.h_to_std(h)
         return mean, std
-    
+
 class GaussianGTF(nn.Module):
     """GRU-like latent space gated transition function (GTF)."""
     def __init__(self, z_dim, h_dim, min_std=0):

@@ -12,7 +12,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
-import math
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -27,12 +27,14 @@ class MultiBDMM(MultiDGTS):
         """
         Construct multimodal bidirectional deep Markov model.
 
+        Parameters
+        ----------
         modalities : list of str
             list of names for each modality
-        dims : list of int
-            list of feature dimensions for each modality
-        dists : list of str
-            list of either 'Normal' [default], 'Bernoulli' or 'Categorical'
+        dims : list of int or tuple
+            list of feature dimensions / dims for each modality
+        dists : list of {'Normal', 'Bernoulli', 'Categorical'}
+            list of distributions for each modality
         encoders : list or dict of nn.Module
             list or dict of custom encoder modules for each modality
         decoders : list or dict of nn.Module
@@ -65,18 +67,16 @@ class MultiBDMM(MultiDGTS):
         # Encoders for each modality q'(z|x) = N(mu(x), sigma(x))
         # Where q'(z|x) = p(z|x) / p(z) 
         self.enc = nn.ModuleDict()            
-        # Default to MLP with single-layer feature extractor
+        # Default to MLP encoder (assumes 1D input)
         for m in self.modalities:
             if self.dists[m] == 'Categorical':
                 self.enc[m] = nn.Sequential(
-                    nn.Embedding(self.dims[m], h_dim),
+                    nn.Embedding(np.prod(self.dims[m]), h_dim),
                     nn.ReLU(),
                     common.GaussianMLP(h_dim, z_dim, h_dim))                
             else:
-                self.enc[m] = nn.Sequential(
-                    nn.Linear(self.dims[m], h_dim),
-                    nn.ReLU(),
-                    common.GaussianMLP(h_dim, z_dim, h_dim))
+                self.enc[m] = common.GaussianMLP(
+                    np.prod(self.dims[m]), z_dim, h_dim)
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
@@ -85,12 +85,14 @@ class MultiBDMM(MultiDGTS):
                 
         # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
-        # Default to MLP
+        # Default to MLP with 1D output
         for m in self.modalities:
             if self.dists[m] == 'Categorical':
-                self.dec[m] = common.CategoricalMLP(z_dim, self.dims[m], h_dim)
+                self.dec[m] = common.CategoricalMLP(
+                    z_dim, np.prod(self.dims[m]), h_dim)
             else:
-                self.dec[m] = common.GaussianMLP(z_dim, self.dims[m], h_dim)
+                self.dec[m] = common.GaussianMLP(
+                    z_dim, np.prod(self.dims[m]), h_dim)
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
@@ -123,6 +125,8 @@ class MultiBDMM(MultiDGTS):
     def encode(self, inputs, combine=False):
         """Encode (optionally missing) inputs to latent space.
 
+        Parameters
+        ----------
         inputs : dict of str : torch.tensor
            keys are modality names, tensors are (T, B, D)
            for max sequence length T, batch size B and input dims D
@@ -130,6 +134,17 @@ class MultiBDMM(MultiDGTS):
         combine : bool
            if true, combines inferred Gaussian distributions using
            the product of experts formula
+
+        Returns
+        -------
+        z_mean : torch.tensor
+            inferred latent mean for each modality
+            shape is (M, T, B, D) if combine is False, otherwise (T, B, D)
+        z_std : torch.tensor
+            inferred latent std for each modality, same shape as z_mean
+        masks : torch.tensor
+            masks for batches and timepoints with missing inputs
+            shape is (M, T, B) if combine is False, otherwise (T, B)
         """
         t_max, b_dim = inputs[inputs.keys()[0]].shape[:2]
         
@@ -171,8 +186,15 @@ class MultiBDMM(MultiDGTS):
     def decode(self, z):
         """Decode from latent space to inputs.
 
+        Parameters
+        ----------
         z : torch.tensor
            shape is (T, B, D) for T timesteps, B batch dims, D latent dims
+
+        Returns
+        -------
+        recon : dict of str : (torch.tensor, ...)
+           tuple of reconstructed distribution parameters for each modality
         """
         t_max, b_dim = z.shape[:2]
         recon = dict()
@@ -184,14 +206,23 @@ class MultiBDMM(MultiDGTS):
         return recon
 
     def z_next(self, z, direction='fwd', glb_prior=None):
-        """Compute p(z_next|z) given z
+        """Compute p(z_next|z) given a tensor of z particles
 
+        Parameters
+        ----------         
         z : torch.tensor
            shape is (K, B, D) for K particles, B batch dims, D latent dims
-        direction : 'fwd' or 'bwd'
+        direction : {'fwd', 'bwd'}
            which direction to compute
         glb_prior : (torch.tensor, torch.tensor)
            optionally provide prior parameters to reuse
+
+        Returns
+        -------
+        z_mean : torch.tensor
+            mean of z_next, shape is (B, D)
+        z_std : torch.tensor
+            std of z_next, shape is (B, D)
         """
 
         if glb_prior is None:
@@ -201,33 +232,35 @@ class MultiBDMM(MultiDGTS):
         
         if z.shape[0] == 1:
             # Compute p(z|z_prev) = p(z) * q'(z|z_prev)
-            q_mean_t, q_std_t = self.trans[direction](z[0])
-            z_mean_t = torch.stack([glb_mean, q_mean_t])
-            z_std_t = torch.stack([glb_std, q_std_t])
-            z_mean_t, z_std_t = self.product_of_experts(z_mean_t, z_std_t)
+            q_mean, q_std = self.trans[direction](z[0])
+            z_mean = torch.stack([glb_mean, q_mean])
+            z_std = torch.stack([glb_std, q_std])
+            z_mean, z_std = self.product_of_experts(z_mean, z_std)
             
-            return z_mean_t, z_std_t
+            return z_mean, z_std
 
         # Compute p(z|z_prev) for each particle
-        q_mean_t, q_std_t = self.trans[direction](z.view(-1, self.z_dim))
-        z_mean_t = torch.stack([glb_mean.repeat(z.shape[0], 1), q_mean_t])
-        z_std_t = torch.stack([glb_std.repeat(z.shape[0], 1), q_std_t])
-        z_mean_t, z_std_t = self.product_of_experts(z_mean_t, z_std_t)
+        q_mean, q_std = self.trans[direction](z.view(-1, self.z_dim))
+        z_mean = torch.stack([glb_mean.repeat(z.shape[0], 1), q_mean])
+        z_std = torch.stack([glb_std.repeat(z.shape[0], 1), q_std])
+        z_mean, z_std = self.product_of_experts(z_mean, z_std)
 
         # Reshape and average across particles
-        z_mean_t, z_std_t = z_mean_t.view(*z.shape), z_std_t.view(*z.shape)
-        z_mean_t, z_std_t = self.mean_of_experts(z_mean_t, z_std_t)
+        z_mean, z_std = z_mean.view(*z.shape), z_std.view(*z.shape)
+        z_mean, z_std = self.mean_of_experts(z_mean, z_std)
 
-        return z_mean_t, z_std_t
+        return z_mean, z_std
         
     def z_sample(self, t_max, b_dim, direction='fwd',
                  sample=True, n_particles=1, z_init=None, inclusive=False):
         """Generates a sequence of latent variables.
 
+        Parameters
+        ----------         
         t_max : int
-            number of timesteps to sample
+            number of timesteps T to sample
         b_dim : int
-            batch size
+            batch size B
         direction : 'fwd' or 'bwd'
             whether to sample forwards or backwards in time
         sample : bool
@@ -238,6 +271,13 @@ class MultiBDMM(MultiDGTS):
             (mean, std) of initial latent distribution (default: global prior)
         inclusive : bool
             flag to include initial state in returned tensor (default : False)
+
+        Returns
+        -------
+        z_mean : torch.tensor
+            mean of z_next, shape is (T, B, D) for D latent dims
+        z_std : torch.tensor
+            std of z_next, shape is (T, B, D) for D latent dims
         """
         glb_mean, glb_std, _ = self.prior((b_dim, 1))
         z_mean, z_std = [], []
@@ -276,18 +316,37 @@ class MultiBDMM(MultiDGTS):
         the prior distributions with inferred distributions
         at each time step using a product of Gaussian experts.
 
+        Parameters
+        ----------         
         z_mean : torch.tensor
+            means of inferred distributions to combine
             (M, T, B, D) for M experts, T steps, batch size B, D latent dims
         z_std : torch.tensor
-            (M, T, B, D) for M experts, T steps, batch size B, D latent dims
+            std of inferred distributions to combine, same shape as z_mean
         z_masks : torch.tensor
-            (M, T, B) for M experts, T steps, batch size B
-        direction : str
+            masks away contributions of inferred distributions, shape (M, T, B)
+        direction : {'fwd', 'bwd'}
             'fwd' or 'bwd' filtering
         sample : bool
             sample at each timestep if true, use the mean otherwise
         n_particles : int
             number of filtering particles, overrides sample flag if > 1
+
+        Returns
+        -------
+        infer : (torch.tensor, torch.tensor)
+            (mean, std) of time-wise cond. posteriors, shape is (T, B, D)
+            when n_particles=1, corresponds to
+            q(z_t|z_{t+1}, x_t) for backward filtering
+            q(z_t|z_{t-1}, x_{t:T}) for forward smoothing
+        prior : (torch.tensor, torch.tensor)
+            (mean, std) of time-wise cond. priors, shape is (T, B, D)
+            when n_particles=1, corresponds to
+            p(z_t|z_{t+1}) for backward filtering
+            p(z_t|z_{t-1}) for forward smoothing
+        samples : torch.tensor
+            z samples from time-wise cond. posterior, shope is (T, B, D)
+            returns mean for each time step when n_particles > 1 are sampled
         """
         t_max, b_dim = z_mean[0].shape[:2]
         
@@ -353,12 +412,14 @@ class MultiBDMM(MultiDGTS):
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
+        Parameters
+        ----------         
         inputs : dict of str : torch.tensor
            keys are modality names, tensors are (T, B, D, ...)
-           for max sequence length T, batch size B and input dims D
+           for max sequence length T, batch size B and input dims (D, ...)
         lengths : list of int
            lengths of all input sequences in the batch
-        mode : 'ffilter', 'bfilter', 'fsmooth' (default), 'bsmooth'
+        mode : {'fsmooth', 'bsmooth', 'ffilter', 'bfilter'}
            whether to filter or smooth, and in which directions
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
@@ -366,6 +427,15 @@ class MultiBDMM(MultiDGTS):
            number of filtering particles (default : 1)
         smt_particles : int
            number of smoothing particles (default : 1)
+
+        Returns
+        -------
+        infer : (torch.tensor, torch.tensor)
+            (mean, std) of time-wise cond. posteriors, see z_filter
+        prior : (torch.tensor, torch.tensor)
+            (mean, std) of time-wise cond. priors, see z_filter
+        recon : dict of str : (torch.tensor, ...)
+           tuple of reconstructed distribution parameters for each modality
         """
         lengths = kwargs.get('lengths')
         mode = kwargs.get('mode', 'fsmooth')
@@ -416,18 +486,32 @@ class MultiBDMM(MultiDGTS):
         loss = losses.kld_gauss(glb_mean, glb_std, nxt_mean, nxt_std)
         return loss
     
-    def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
+    def step(self, inputs, mask, kld_mult, rec_mults,
+             targets=None, uni_loss=True, **kwargs):
         """Custom training step for bidirectional training paradigm.
-        Additional keyword arguments:
+        See :func:`~models.MultiDGTS.step` for non-keyword arguments
 
-        f_mode : 'ffilter' or 'bfilter' (default)
+        Parameters
+        ----------         
+        f_mode : {'bfilter', 'ffilter'}
             mode when computing filtering loss
-        s_mode : 'fsmooth' (default) or 'bsmooth'
+        s_mode : {'fsmooth', 'bsmooth'}
             mode when computing smoothing loss
         f_mult : float
             how much to weight filtering loss (default : 0.5)
         s_mult : float
             how much to weight smoothing loss (default : 0.5)
+        match_mult : float
+            how much to weight prior matching loss (default : 0.01)
+        train_particles : int
+            n_particles for filtering pass when smoothing (default : 25)
+        match_particles : int
+            n_particles for prior matching computation
+
+        Returns
+        -------
+        loss : torch.tensor
+            total training loss for this step
         """
         # Extract arguments
         f_mode = kwargs.get('f_mode', 'bfilter')
@@ -447,11 +531,12 @@ class MultiBDMM(MultiDGTS):
                      self.kld_prior(match_particles, 'bwd'))
         # Compute loss when filtering
         loss += f_mult * super(MultiBDMM, self).\
-            step(inputs, mask, kld_mult, rec_mults, mode=f_mode, **kwargs)
+            step(inputs, mask, kld_mult, rec_mults, targets, uni_loss,
+                 mode=f_mode, **kwargs)
         # Compute loss when smoothing
         loss += s_mult * super(MultiBDMM, self).\
-            step(inputs, mask, kld_mult, rec_mults, mode=s_mode,
-                 flt_particles=train_particles, **kwargs)
+            step(inputs, mask, kld_mult, rec_mults, targets, uni_loss,
+                 mode=s_mode, flt_particles=train_particles, **kwargs)
         return loss
     
 if __name__ == "__main__":
@@ -469,7 +554,7 @@ if __name__ == "__main__":
 
     print("Loading data...")
     dataset = SpiralsDataset(['spiral-x', 'spiral-y'],
-                             args.dir, args.subset, base_rate=2.0,
+                             args.dir, args.subset,
                              truncate=True, item_as_dict=True)
     print("Building model...")
     model = MultiBDMM(['spiral-x', 'spiral-y'], [1, 1],
@@ -478,7 +563,6 @@ if __name__ == "__main__":
     print("Passing a sample through the model...")
     data, mask, lengths, order = seq_collate_dict([dataset[0]])
     infer, prior, recon = model(data, lengths=lengths)
-    rec_mean, rec_std = recon
     print("Predicted:")
-    for x, y in zip(rec_mean['spiral-x'], rec_mean['spiral-y']):
+    for x, y in zip(recon['spiral-x'][0], recon['spiral-y'][0]):
         print("{:+0.3f}, {:+0.3f}".format(x.item(), y.item()))

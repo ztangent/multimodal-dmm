@@ -17,6 +17,8 @@ class MultiDGTS(nn.Module):
         Return parameters for product of independent Gaussian experts.
         See https://arxiv.org/pdf/1410.7827.pdf for equations.
 
+        Parameters
+        ----------         
         mean : torch.tensor
             (M, B, D) for M experts, batch size B, and D latent dims OR
             (M, T, B, D) with an optional time dimension
@@ -26,6 +28,13 @@ class MultiDGTS(nn.Module):
         mask : torch.tensor
             (M, B) for M experts and batch size B
             (M, T, B) with an optional time dimension
+
+        Returns
+        -------
+        product_mean : torch.tensor
+            mean of product Gaussian, shape (T, B, D) or (B, D)
+        product_std : torch.tensor
+            std of product Gaussian, shape (T, B, D) or (B, D)
         """
         # Square std and add numerical constant for stability
         var = std.pow(2) + eps
@@ -43,6 +52,9 @@ class MultiDGTS(nn.Module):
 
     def mean_of_experts(self, mean, std, mask=None):
         """
+
+        Parameters
+        ----------
         Return mean and standard deviation of a mixture of Gaussian experts
 
         mean : torch.tensor
@@ -51,6 +63,13 @@ class MultiDGTS(nn.Module):
             (M, B, D) for M experts, batch size B, and D latent dims
         mask : torch.tensor
             (M, B) for M experts and batch size B
+
+        Returns
+        -------
+        sum_mean : torch.tensor
+            mean of Gaussian mixture, shape (T, B, D) or (B, D)
+        sum_std : torch.tensor
+            std of Gaussian mixture, shape (T, B, D) or (B, D)
         """
         # Set missing data to zero so they are excluded from calculation
         if mask is None:
@@ -63,23 +82,50 @@ class MultiDGTS(nn.Module):
         sum_std = sum_var.pow(0.5)
         return sum_mean, sum_std
 
-    def step(self, inputs, mask, kld_mult, rec_mults, targets=None, **kwargs):
-        """Custom training step for multimodal training paradigm."""
+    def step(self, inputs, mask, kld_mult, rec_mults,
+             targets=None, uni_loss=True, **kwargs):
+        """Custom training step for multimodal training paradigm.
+
+        Parameters
+        ----------         
+        inputs : dict of str : torch.tensor
+           keys are modality names, input tensors are (T, B, D, ...)
+           for max sequence length T, batch size B and input dims D
+        mask : torch.tensor
+           mask for batch of sequences with unequal lengths
+        kld_mult : float
+           how much to weight KLD loss between posterior and prior
+        rec_mults: dict of str : float
+           how much to weight the reconstruction loss for each modality
+        targets : dict of str : torch.tensor
+           optionally provide target inputs to score against,
+           otherwise targets is a copy of inputs by default
+        uni_loss : bool
+           flag to compute ELBO for each modality on its own (default : True)
+
+        Returns
+        -------
+        loss : torch.tensor
+            total training loss for this step
+        """
+        #
         # Get rid of unrecognized modalities
         inputs = {m : inputs[m] for m in inputs if m in self.modalities}
         # If targets not provided, assume inputs are targets
         if targets == None:
             targets = inputs
         loss = 0
-        # Compute negative ELBO loss for individual modalities
-        for m in self.modalities:
-            infer, prior, recon = self.forward({m : inputs[m]}, **kwargs)
-            loss += self.loss({m : targets[m]}, infer, prior, recon, mask,
-                              kld_mult, rec_mults)
         # Compute negative ELBO loss for all modalities
         if len(self.modalities) > 1:
             infer, prior, recon = self.forward(inputs, **kwargs)
             loss += self.loss(targets, infer, prior, recon, mask,
+                              kld_mult, rec_mults)
+        if not uni_loss:
+            return loss
+        # Compute negative ELBO loss for individual modalities
+        for m in self.modalities:
+            infer, prior, recon = self.forward({m : inputs[m]}, **kwargs)
+            loss += self.loss({m : targets[m]}, infer, prior, recon, mask,
                               kld_mult, rec_mults)
         return loss
         
