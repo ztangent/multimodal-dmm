@@ -175,12 +175,12 @@ def visualize(dataset, observed, predictions, ranges,
 def save_params(args, model):
     fname = 'param_hist.tsv'
     df = pd.DataFrame([vars(args)], columns=vars(args).keys())
-    df = df[['save_dir', 'modalities', 'normalize', 'batch_size', 'split',
-             'epochs', 'lr', 'kld_mult', 'rec_mults', 'kld_anneal']]
-    df.insert(0, 'model', [model.__class__.__name__])
+    df = df[['save_dir', 'model', 'modalities',
+             'batch_size', 'split', 'epochs', 'lr', 'w_decay', 'seed',
+             'burst_frac', 'kld_mult', 'rec_mults', 'kld_anneal',
+             'model_args', 'train_args', 'eval_args']]
     df['h_dim'] = model.h_dim
     df['z_dim'] = model.z_dim
-    df.set_index('model')
     df.to_csv(fname, mode='a', header=(not os.path.exists(fname)), sep='\t')
         
 def save_checkpoint(modalities, model, path):
