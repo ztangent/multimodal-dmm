@@ -1,5 +1,5 @@
 """Training code for the noisy spirals dataset."""
-
+0;136;0c
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
@@ -344,11 +344,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='bdmm', metavar='S',
                         help='name of model to train (default: bdmm)')
-    parser.add_argument('--model_args', type=yaml.load, default=dict(),
+    parser.add_argument('--model_args', type=yaml.safe_load, default=dict(),
                         help='additional model arguments as yaml dict')
-    parser.add_argument('--train_args', type=yaml.load, default=dict(),
+    parser.add_argument('--train_args', type=yaml.safe_load, default=dict(),
                         help='additional training arguments as yaml dict')
-    parser.add_argument('--eval_args', type=yaml.load, default=dict(),
+    parser.add_argument('--eval_args', type=yaml.safe_load, default=dict(),
                         help='additional evaluation arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
@@ -366,7 +366,7 @@ if __name__ == "__main__":
                         help='random seed (default: 1)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
                         help='max kld loss multiplier (default: 1.0)')
-    parser.add_argument('--rec_mults', type=yaml.load, default=None,
+    parser.add_argument('--rec_mults', type=yaml.safe_load, default=None,
                         help='reconstruction loss multiplier (default: 1/dim)')
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over (default: 100)')
