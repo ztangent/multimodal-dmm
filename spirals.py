@@ -1,5 +1,4 @@
 """Training code for the noisy spirals dataset."""
-0;136;0c
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
