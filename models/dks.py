@@ -19,6 +19,7 @@ import torch.nn as nn
 
 from .dgts import MultiDGTS
 from . import common
+from ..datasets.multiseq import mask_to_extent
 
 class MultiDKS(MultiDGTS):
     def __init__(self, modalities, dims, dists=None,
@@ -208,6 +209,11 @@ class MultiDKS(MultiDGTS):
         if self.rnn_dir == 'bwd':
             h_out = torch.flip(h_out, [0])
                 
+        # Find indices for last observations
+        mask_all = torch.prod([masks[m] for m in self.modalities])
+        _, t_stop = mask_to_extent(mask_all)
+        t_stop = torch.tensor(t_stop).to(self.device)
+        
         # Forward pass to infer and sample from p(z_1:T|x_1:T)
         z_samples = []
         for t in range(t_max):
@@ -224,6 +230,13 @@ class MultiDKS(MultiDGTS):
             # Infer the latent distribution p(z_t|z_{t-1}, x_{1:T})
             comb_in = torch.cat([z_t, h_out[t]], dim=-1)
             infer_mean_t, infer_std_t = self.combiner(comb_in)
+            
+            # Only infer for timesteps before the last observation
+            infer_mean_t = (infer_mean_t * (t <= t_stop) + 
+                            prior_mean_t * (t > t_stop))
+            infer_std_t = (infer_std_t * (t <= t_stop) + 
+                           prior_std_t * (t > t_stop))
+            
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
             
