@@ -279,11 +279,24 @@ class MultiseqDataset(Dataset):
             merged.data[m] += copy.deepcopy(set2.data[m])
         return merged
         
-def len_to_mask(lengths):
+def len_to_mask(lengths, time_first=True):
     """Converts list of sequence lengths to a mask tensor."""
     mask = torch.arange(max(lengths)).expand(len(lengths), max(lengths))
     mask = mask < torch.tensor(lengths).unsqueeze(1)
+    if time_first:
+        mask = mask.transpose(0, 1)
     return mask.unsqueeze(-1)
+
+def mask_to_extent(mask, time_first=True):
+    """Return first and last observed indices given mask tensor."""
+    if not time_first:
+        mask = mask.transpose(0, 1)
+    t_max, b_dim = mask.shape[0:1]
+    idx = torch.arange(t_max).expand(b_dim, t_max).transpose(0, 1)
+    idx = mask.view(t_max, b_dim).long() * idx
+    t_start = idx.min(dim=0).tolist()
+    t_stop = idx.max(dim=0).tolist()
+    return t_start, t_stop
 
 def pad_and_merge(sequences, max_len=None):
     """Pads and merges unequal length sequences into batch tensor."""
