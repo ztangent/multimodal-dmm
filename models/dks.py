@@ -174,7 +174,7 @@ class MultiDKS(MultiDGTS):
                 else:
                     input_m = torch.zeros(t_max, b_dim, self.dims[m])
                 input_m = input_m.to(self.device)
-                masks[m] = torch.zeros(t_max, b_dim).to(self.device)
+                masks[m] = torch.zeros(t_max, b_dim).byte().to(self.device)
             else:
                 input_m = torch.tensor(inputs[m])
                 masks[m] = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
