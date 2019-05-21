@@ -135,35 +135,12 @@ def visualize(dataset, observed, predictions, ranges,
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
-        truth, data = sel_truth[i], sel_data[i]
-        obs, pred = sel_obs[i], sel_pred[i]
-        rng, m = sel_rng[i], sel_metric[i]
-        j, i = (i // 4), (i % 4)
-        args.axes[i,j].cla()
-
-        # Plot confidence ellipses
-        ec = EllipseCollection(rng[0], rng[1], (0,), units='x',
-                               facecolors=('c',), alpha=0.25,
-                               offsets=np.column_stack(pred),
-                               transOffset=args.axes[i,j].transData)
-        args.axes[i,j].add_collection(ec)
-        
-        # Plot ground truth
-        args.axes[i,j].plot(truth[0], truth[1], 'b-', linewidth=1)
-
-        # Plot observations (blue = both, magenta = x-only, yellow = y-only)
-        if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
-            args.axes[i,j].plot(obs[0], data[1], 'm.', markersize=1.5)
-            args.axes[i,j].plot(data[0], obs[1], 'y.', markersize=1.5)
-        args.axes[i,j].plot(obs[0], obs[1], 'b.', markersize=1.5)
-
-        # Plot predictions
-        args.axes[i,j].plot(pred[0], pred[1], 'g-', linewidth=1)
-        
-        # Set limits and title
-        args.axes[i,j].set_xlim(-5, 5)
-        args.axes[i,j].set_ylim(-5, 5)
-        args.axes[i,j].set_title("Metric = {:0.3f}".format(m))
+        axis = args.axes[(i % 4),(i // 4)]
+        # Plot spiral
+        plot_spiral(axis, sel_truth[i], sel_data[i],
+                    sel_obs[i], sel_pred[i], sel_rng[i])
+        # Set title as metric
+        axis.set_title("Metric = {:0.3f}".format(sel_metric[i]))
         
     plt.tight_layout()
     plt.draw()
@@ -171,6 +148,31 @@ def visualize(dataset, observed, predictions, ranges,
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
 
+def plot_spiral(axis, truth, data, obs, pred, rng):
+    axis.cla()
+    # Plot confidence ellipses
+    ec = EllipseCollection(rng[0], rng[1], (0,), units='x',
+                           facecolors=('c',), alpha=0.25,
+                           offsets=np.column_stack(pred),
+                           transOffset=axis.transData)
+    axis.add_collection(ec)
+
+    # Plot ground truth
+    axis.plot(truth[0], truth[1], 'b-', linewidth=1)
+
+    # Plot observations (blue = both, magenta = x-only, yellow = y-only)
+    if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
+        axis.plot(obs[0], data[1], 'm.', markersize=1.5)
+        axis.plot(data[0], obs[1], 'y.', markersize=1.5)
+    axis.plot(obs[0], obs[1], 'b.', markersize=1.5)
+
+    # Plot predictions
+    axis.plot(pred[0], pred[1], 'g-', linewidth=1)
+
+    # Set limits
+    axis.set_xlim(-5, 5)
+    axis.set_ylim(-5, 5)
+        
 def save_params(args, model):
     fname = 'param_hist.tsv'
     df = pd.DataFrame([vars(args)], columns=vars(args).keys())
@@ -244,6 +246,7 @@ def main(args):
         constructor = getattr(models, args.model)
         model = constructor(args.modalities,
                             dims=(dims[m] for m in args.modalities),
+                            z_dim=5, h_dim=20,
                             device=args.device, **args.model_args)
     else:
         print('Model name not recognized.')
@@ -341,8 +344,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='bdmm', metavar='S',
-                        help='name of model to train (default: bdmm)')
+    parser.add_argument('--model', type=str, default='dmm', metavar='S',
+                        help='name of model to train (default: dmm)')
     parser.add_argument('--model_args', type=yaml.safe_load, default=dict(),
                         help='additional model arguments as yaml dict')
     parser.add_argument('--train_args', type=yaml.safe_load, default=dict(),
