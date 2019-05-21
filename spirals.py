@@ -108,10 +108,11 @@ def evaluate(loader, model, args, fig_path=None):
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
-    mse_loss = sum(mse_loss) / len(loader.dataset)
+    mse_std = np.std(mse_loss)
+    mse_loss = sum(mse_loss) / len(mse_loss)
     losses = kld_loss, rec_loss, mse_loss
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
-          .format(kld_loss, rec_loss, mse_loss))
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f} +-{:2.3f}'\
+          .format(kld_loss, rec_loss, mse_loss, mse_std))
     return predictions, losses
 
 def eval_suite(item, truth, model, args):
@@ -180,7 +181,7 @@ def eval_suite(item, truth, model, args):
         axes[i].set_yticks([], [])
         axes[i].set_xlabel("MSE: {:0.3f}".format(mse))
         if i == 0:
-            axes[i].set_ylabel("BFVI")
+            axes[i].set_ylabel(args.model.upper())
         
     # Display and save figure
     plt.draw()
