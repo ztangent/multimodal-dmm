@@ -19,7 +19,7 @@ import torch.nn as nn
 
 from .dgts import MultiDGTS
 from . import common
-from ..datasets.multiseq import mask_to_extent
+from datasets.multiseq import mask_to_extent
 
 class MultiDKS(MultiDGTS):
     def __init__(self, modalities, dims, dists=None,
@@ -210,9 +210,9 @@ class MultiDKS(MultiDGTS):
             h_out = torch.flip(h_out, [0])
                 
         # Find indices for last observations
-        mask_all = torch.prod([masks[m] for m in self.modalities])
+        mask_all = torch.stack([masks[m] for m in self.modalities]).prod(dim=0)
         _, t_stop = mask_to_extent(mask_all)
-        t_stop = torch.tensor(t_stop).to(self.device)
+        t_stop = t_stop.unsqueeze(-1)
         
         # Forward pass to infer and sample from p(z_1:T|x_1:T)
         z_samples = []
@@ -232,10 +232,10 @@ class MultiDKS(MultiDGTS):
             infer_mean_t, infer_std_t = self.combiner(comb_in)
             
             # Only infer for timesteps before the last observation
-            infer_mean_t = (infer_mean_t * (t <= t_stop) + 
-                            prior_mean_t * (t > t_stop))
-            infer_std_t = (infer_std_t * (t <= t_stop) + 
-                           prior_std_t * (t > t_stop))
+            infer_mean_t = (infer_mean_t * (t <= t_stop).float() + 
+                            prior_mean_t * (t > t_stop).float())
+            infer_std_t = (infer_std_t * (t <= t_stop).float() + 
+                           prior_std_t * (t > t_stop).float())
             
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)

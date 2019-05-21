@@ -291,11 +291,12 @@ def mask_to_extent(mask, time_first=True):
     """Return first and last observed indices given mask tensor."""
     if not time_first:
         mask = mask.transpose(0, 1)
-    t_max, b_dim = mask.shape[0:1]
+    t_max, b_dim = mask.shape[0:2]
     idx = torch.arange(t_max).expand(b_dim, t_max).transpose(0, 1)
-    idx = mask.view(t_max, b_dim).long() * idx
-    t_start = idx.min(dim=0).tolist()
-    t_stop = idx.max(dim=0).tolist()
+    idx = mask.view(t_max, b_dim).long() * idx.to(mask.device)
+    _, t_stop = idx.max(dim=0)
+    idx[idx==0] = t_max
+    _, t_start = idx.min(dim=0)
     return t_start, t_stop
 
 def pad_and_merge(sequences, max_len=None):
