@@ -327,9 +327,7 @@ def seq_collate(data, time_first=True):
     for modality in data:
         m_padded = pad_and_merge(modality, max(lengths))
         padded.append(m_padded if time_first else m_padded.transpose(0, 1))
-    mask = len_to_mask(lengths)
-    if not time_first:
-        mask = mask.transpose(0, 1)
+    mask = len_to_mask(lengths, time_first)
     return tuple(padded + [mask, lengths])
 
 def seq_collate_dict(data, time_first=True):
@@ -344,9 +342,7 @@ def seq_collate_dict(data, time_first=True):
         m_data = [d[m] for d in data]
         m_padded = pad_and_merge(m_data, max(lengths))
         batch[m] = m_padded if time_first else m_padded.transpose(0, 1)
-    mask = len_to_mask(lengths)
-    if time_first:
-        mask = mask.transpose(0, 1)
+    mask = len_to_mask(lengths, time_first)
     return batch, mask, lengths, order
 
 def seq_decoll(batch, lengths, order, time_first=True):
