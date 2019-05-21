@@ -164,7 +164,7 @@ class MultiVRNN(MultiDGTS):
                     continue
                 # Mask out NaNs
                 mask = (1 - torch.isnan(inputs[m][t]).any(dim=1))
-                input_m_t = torch.tensor(inputs[m][t])
+                input_m_t = inputs[m][t].clone().detach()
                 input_m_t[torch.isnan(input_m_t)] = 0.0
                 # Extract features 
                 phi_m_t = self.phi[m](input_m_t)
@@ -207,7 +207,7 @@ class MultiVRNN(MultiDGTS):
                     if m not in inputs:
                         input_m_t = rec_mean[m][-1].detach()
                     else:
-                        input_m_t = torch.tensor(inputs[m][t])
+                        input_m_t = inputs[m][t].clone().detach()
                         nan_mask = torch.isnan(input_m_t)
                         input_m_t[nan_mask] = rec_mean[m][-1][nan_mask]
                     phi_m_t = self.phi[m](input_m_t)

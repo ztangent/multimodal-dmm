@@ -176,7 +176,7 @@ class MultiDKS(MultiDGTS):
                 input_m = input_m.to(self.device)
                 masks[m] = torch.zeros(t_max, b_dim).byte().to(self.device)
             else:
-                input_m = torch.tensor(inputs[m])
+                input_m = inputs[m].clone().detach()
                 masks[m] = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
             input_m[torch.isnan(input_m)] = 0.0
             # Flatten time and batch dimensions to pass through encoder

@@ -368,7 +368,7 @@ def func_delete(batch_in, del_func, lengths=None, modalities=None):
         modalities = batch_in.keys()
     batch_out = dict()
     for m in batch_in.keys():
-        batch_out[m] = torch.tensor(batch_in[m])
+        batch_out[m] = batch_in[m].clone().detach()
         if m not in modalities:
             continue
         t_max, b_dim = batch_in[m].shape[:2]

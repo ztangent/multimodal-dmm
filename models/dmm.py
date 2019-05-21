@@ -161,7 +161,7 @@ class MultiDMM(MultiDGTS):
                 continue
             # Mask out all timesteps with NaNs
             mask_m = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
-            input_m = torch.tensor(inputs[m])
+            input_m = inputs[m].clone().detach()
             input_m[torch.isnan(input_m)] = 0.0
             if self.dists[m] == 'Categorical':
                 input_m = input_m.long()
