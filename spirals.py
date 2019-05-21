@@ -114,6 +114,79 @@ def evaluate(loader, model, args, fig_path=None):
           .format(kld_loss, rec_loss, mse_loss))
     return predictions, losses
 
+def eval_suite(item, truth, model, args):
+    # Run suite of evaluation tasks on provided item
+    model.eval()
+    # Collate item to batch tensor
+    targets, mask, lengths, order = mseq.seq_collate_dict([item])
+    # Send to device
+    mask = mask.to(args.device)
+    for m in targets.keys():
+        targets[m] = targets[m].to(args.device)
+
+    # Process inputs for each evaluation task
+    tasks = ['Recon.', 'Drop Half', 'Extra. Fwd.', 'Extra. Bwd.', 'Cond. Gen']
+    inputs = dict()
+    # For reconstruction provide complete inputs
+    inputs[tasks[0]] = {m: targets[m].clone().detach() for m in targets}
+    # For drop-half, randomly remove 50% of data
+    inputs[tasks[1]] = mseq.rand_delete(targets, 0.5, lengths)
+    # For forward extrapolation, remove last 25% of data
+    inputs[tasks[2]] = mseq.keep_segment(targets, 0.0, 0.75, lengths)
+    # For backward extrapolation, remove first 25% of data
+    inputs[tasks[3]] = mseq.keep_segment(targets, 0.25, 1.0, lengths)
+    # For conditional generation, remove last 75% of y-coordinate
+    inputs[tasks[4]] =\
+        mseq.keep_segment(targets, 0.0, 0.25, lengths, ['spiral-y'])
+    inputs[tasks[4]]['spiral-x'] = targets['spiral-x'].clone().detach()
+
+    # Create figure and axes
+    fig, axes = plt.subplots(1, 5, figsize=(10,2.5),
+                             subplot_kw={'aspect': 'equal'})
+    
+    # Iterate over tasks
+    for i, task in enumerate(tasks):
+        # Run forward pass observed inputs
+        observed = inputs[task]
+        infer, prior, recon = model(observed, lengths=lengths,
+                                    sample=False, **args.eval_args)
+        # Compute KLD and reconstruction losses
+        kld_loss = model.kld_loss(infer, prior, mask)
+        kld_loss /= lengths[0]
+        rec_loss = model.rec_loss(targets, recon, mask, args.rec_mults)
+        rec_loss /= lengths[0]
+        # Compute mean squared error for each timestep
+        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
+        mse = mse.sum(dim=range(2, mse.dim()))
+        # Average across timesteps, for each sequence
+        mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
+        mse = mse.item()
+        # Print losses
+        print('{:15} KLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
+              .format(task, kld_loss, rec_loss, mse))
+        # Extract quantities for plotting
+        data = (targets['spiral-x'][:,0].cpu().numpy(),
+                targets['spiral-y'][:,0].cpu().numpy())
+        obs = (observed['spiral-x'][:,0].cpu().numpy(),
+               observed['spiral-y'][:,0].cpu().numpy())
+        pred = (recon['spiral-x'][0][:,0].cpu().numpy(),
+                recon['spiral-y'][0][:,0].cpu().numpy())
+        rng = (1.96*recon['spiral-x'][1][:,0].cpu().numpy(),
+               1.96*recon['spiral-y'][1][:,0].cpu().numpy())
+        # Plot spiral
+        plot_spiral(axes[i], truth, data, obs, pred, rng)
+        axes[i].set_title(task)
+        axes[i].set_xticks([], [])
+        axes[i].set_yticks([], [])
+        axes[i].set_xlabel("MSE: {:0.3f}".format(mse))
+        if i == 0:
+            axes[i].set_ylabel("BFVI")
+        
+    # Display and save figure
+    plt.draw()
+    plt.savefig('suite.pdf')
+    plt.show()
+
 def visualize(dataset, observed, predictions, ranges,
               metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
@@ -172,7 +245,7 @@ def plot_spiral(axis, truth, data, obs, pred, rng):
     # Set limits
     axis.set_xlim(-5, 5)
     axis.set_ylim(-5, 5)
-        
+    
 def save_params(args, model):
     fname = 'param_hist.tsv'
     df = pd.DataFrame([vars(args)], columns=vars(args).keys())
@@ -267,6 +340,19 @@ def main(args):
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
 
+    # Run task suite on data sequence, if given
+    if args.suite is not None:
+        # Get data item and corresponding ground truth from dataset
+        suite_idx = args.suite
+        item = test_data[suite_idx]
+        truth = test_data.orig['metadata'][suite_idx][:,0:2]
+        truth = (truth[:,0], truth[:,1])
+        print("Running suite of inference tasks...")
+        print("--")
+        with torch.no_grad():
+            eval_suite(item, truth, model, args)
+        return
+        
     # Create figure to visualize predictions
     if args.visualize:
         args.fig, args.axes = plt.subplots(4, 2, figsize=(4,8),
@@ -396,6 +482,8 @@ if __name__ == "__main__":
                         help='modalities to normalize (default: [])')
     parser.add_argument('--test', action='store_true', default=False,
                         help='evaluate without training (default: false)')
+    parser.add_argument('--suite', type=int, default=None, metavar='I',
+                        help='runs inference suite on spiral I if set')
     parser.add_argument('--load', type=str, default=None,
                         help='path to trained model (either resume or test)')
     parser.add_argument('--data_dir', type=str, default="./datasets/spirals",
