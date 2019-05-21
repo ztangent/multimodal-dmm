@@ -271,7 +271,7 @@ def main(args):
         args.modalities = checkpoint['modalities']
     elif args.modalities is None:
         # Default to all if unspecified
-        args.modalities = ['video', 'action']
+        args.modalities = ['video', 'person', 'action']
 
     # Load data for specified modalities
     train_data, test_data = load_data(args.modalities, args)
@@ -280,21 +280,24 @@ def main(args):
     args.model = models.names.get(args.model, args.model)
 
     # Construct model
-    dims = {'video': 64 * 64, 'action': 10}
-    dists = {'video': 'Bernoulli', 'action': 'Categorical'}
+    dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
+    dists = {'video': 'Bernoulli',
+             'person': 'Categorical',
+             'action': 'Categorical'}
     if hasattr(models, args.model):
         constructor = getattr(models, args.model)
-        image_encoder = models.common.ImageEncoder(z_dim=64)
-        image_decoder = models.common.ImageDecoder(z_dim=64)
+        gauss_out = (args.model != 'MultiDKS')
+        image_encoder = models.common.ImageEncoder(256, gauss_out)
+        image_decoder = models.common.ImageDecoder(256)
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],
                             dists=[dists[m] for m in args.modalities],
                             encoders={'video': image_encoder},
                             decoders={'video': image_decoder},
-                            z_dim=64, h_dim=64,
+                            z_dim=256, h_dim=256,
                             device=args.device, **args.model_args)
-        model.z0_mean.requires_grad = False
-        model.z0_log_std.requires_grad = False
+        # model.z0_mean.requires_grad = False
+        # model.z0_log_std.requires_grad = False
     else:
         print('Model name not recognized.')
         return
@@ -303,8 +306,9 @@ def main(args):
 
     # Default reconstruction loss multipliers
     if args.rec_mults is None:
-        args.rec_mults = {m : (1.0 / dims[m]) / len(args.modalities)
-                          for m in args.modalities}
+        args.rec_mults = {'video': 1,
+                          'person': 10,
+                          'action': 10}
         
     # Setup loss and optimizer
     optimizer = optim.Adam(model.parameters(),
@@ -394,8 +398,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='bdmm', metavar='S',
-                        help='name of model to train (default: bdmm)')
+    parser.add_argument('--model', type=str, default='dmm', metavar='S',
+                        help='name of model to train (default: dmm)')
     parser.add_argument('--model_args', type=yaml.safe_load, default=dict(),
                         help='additional model arguments as yaml dict')
     parser.add_argument('--train_args', type=yaml.safe_load, default=dict(),
@@ -422,8 +426,8 @@ if __name__ == "__main__":
                         help='max kld loss multiplier (default: 1.0)')
     parser.add_argument('--rec_mults', type=yaml.safe_load, default=None,
                         help='reconstruction loss multiplier (default: 1/dim)')
-    parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
-                        help='epochs to increase kld_mult over (default: 100)')
+    parser.add_argument('--kld_anneal', type=int, default=1500, metavar='N',
+                        help='epochs to anneal kld_mult over (default: 1500)')
     parser.add_argument('--burst_frac', type=float, default=0, metavar='F',
                         help='burst error rate during training (default: 0)')
     parser.add_argument('--drop_frac', type=float, default=0, metavar='F',

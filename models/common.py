@@ -111,7 +111,7 @@ class Deconv(nn.Module):
     
 class ImageEncoder(nn.Module):
     """Convolutional encoder for images."""
-    def __init__(self, z_dim,
+    def __init__(self, z_dim, gauss_out=True,
                  img_size=64, n_channels=3, n_kernels=64, n_layers=3):
         super(ImageEncoder, self).__init__()
         self.feat_size = img_size // 2**n_layers
@@ -124,17 +124,21 @@ class ImageEncoder(nn.Module):
               [Conv(n_kernels // 2, n_kernels, last=True)])
         )
 
-        self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
-        self.feat_to_z_std = nn.Sequential(
-            nn.Linear(self.feat_dim, z_dim),
-            nn.Softplus()
-        )
+        self.gauss_out = gauss_out
+        if gauss_out:
+            self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
+            self.feat_to_z_std = nn.Sequential(
+                nn.Linear(self.feat_dim, z_dim),
+                nn.Softplus()
+            )
 
-        nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
-        nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
+            nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
+            nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
         
     def forward(self, x):
         feats = self.conv_stack(x)
+        if not self.gauss_out:
+            return feats
         z_mean = self.feat_to_z_mean(feats.view(-1, self.feat_dim))
         z_std = self.feat_to_z_std(feats.view(-1, self.feat_dim))
         return z_mean, z_std

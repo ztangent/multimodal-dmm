@@ -120,7 +120,11 @@ class MultiDKS(MultiDGTS):
         self.rnn = nn.ModuleDict()
         self.h0 = nn.ParameterDict()
         for m in self.modalities:
-            self.rnn[m] = nn.GRU(h_dim, h_dim, rnn_layers, rnn_bias)
+            if hasattr(self.enc[m], 'feat_dim'):
+                feat_dim = self.enc[m].feat_dim
+            else:
+                feat_dim = h_dim
+            self.rnn[m] = nn.GRU(feat_dim, h_dim, rnn_layers, rnn_bias)
             self.h0[m] = nn.Parameter(torch.zeros(rnn_layers, 1, h_dim))
 
         # Combiner inference network q(z) = N(mu(z_prev, h), sigma(z_prev, h))
@@ -169,7 +173,9 @@ class MultiDKS(MultiDGTS):
         feats, masks = dict(), dict()
         for m in self.modalities:
             if m not in inputs:
-                if type(self.dims[m]) == tuple:
+                if self.dists[m] == 'Categorical':
+                    input_m = torch.zeros(t_max, b_dim, 1)
+                elif type(self.dims[m]) == tuple:
                     input_m = torch.zeros(t_max, b_dim, *self.dims[m])
                 else:
                     input_m = torch.zeros(t_max, b_dim, self.dims[m])
@@ -179,10 +185,12 @@ class MultiDKS(MultiDGTS):
                 input_m = inputs[m].clone().detach()
                 masks[m] = 1 - torch.isnan(inputs[m]).flatten(2,-1).any(dim=-1)
             input_m[torch.isnan(input_m)] = 0.0
+            if self.dists[m] == 'Categorical':
+                input_m = input_m.long()
             # Flatten time and batch dimensions to pass through encoder
             input_m = input_m.flatten(0, 1)
             feats[m] = self.enc[m](input_m).reshape(t_max, b_dim, -1)
-
+            
         # Initialize RNN hidden states
         h = {m: self.h0[m].repeat(1, b_dim, 1) for m in self.modalities}
         h_out = {m: [] for m in self.modalities}
