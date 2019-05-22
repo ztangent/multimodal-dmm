@@ -9,21 +9,19 @@ import argparse, yaml
 
 import pandas as pd
 import numpy as np
-from scipy.stats import pearsonr
-import matplotlib.pyplot as plt
 import cv2 as cv
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-
 from datasets import multiseq as mseq
 from datasets import weizmann
 
 import models
-from utils import eval_ccc, anneal, plot_grad_flow
+from utils import eval_ssim, anneal, plot_grad_flow
 
 def train(loader, model, optimizer, epoch, args):
     model.train()
@@ -73,7 +71,7 @@ def evaluate(loader, model, args, fig_path=None):
     reference = {m: [] for m in loader.dataset.modalities}
     predicted = {m: [] for m in args.modalities}
     observed = {m: [] for m in args.modalities}
-    kld_loss, rec_loss, mse_loss = [], [], []
+    kld_loss, rec_loss, mse_loss, ssim_loss = [], [], [], []
     # Only compute reconstruction loss for specified modalities
     rec_mults = dict(args.rec_mults)
     if args.eval_mods is not None:
@@ -106,24 +104,34 @@ def evaluate(loader, model, args, fig_path=None):
         for m in recon.keys():
             observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
             predicted[m] += mseq.seq_decoll(recon[m][0], lengths, order)
-        # Compute mean squared error for each timestep
-        mse = ((recon['video'][0]-targets[m]).pow(2) /
-               recon['video'][0][0,0].numel() )
+        # Compute video mean squared error and SSIM for each timestep
+        rec_vid, tgt_vid = recon['video'][0], targets['video']
+        mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
         mse = mse.sum(dim=range(2, mse.dim()))
+        ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
+        ssim = ssim.view(max(lengths), len(lengths))
         # Average across timesteps, for each sequence
         mse[1 - mask.squeeze(-1)] = 0.0
-        mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
+        mse = mse.sum(dim=0) / torch.tensor(lengths).float().to(args.device)
         mse_loss += mse[order].tolist()
+        ssim[1 - mask.squeeze(-1)] = 0.0
+        ssim = ssim.sum(dim=0) / torch.tensor(lengths).float().to(args.device)
+        ssim_loss += ssim[order].tolist()
     # Plot predictions against truth
     if args.visualize:
          visualize(reference, observed, predicted, mse_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
-    mse_loss = sum(mse_loss) / len(loader.dataset)
-    losses = kld_loss, rec_loss, mse_loss
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
-          .format(kld_loss, rec_loss, mse_loss))
+    mse_std = np.std(mse_loss)
+    mse_loss = sum(mse_loss) / len(mse_loss)
+    ssim_std = np.std(ssim_loss)
+    ssim_loss = sum(ssim_loss) / len(ssim_loss)
+    losses = kld_loss, rec_loss, mse_loss, ssim_loss
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
+          format(kld_loss, rec_loss))
+    print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
+          format(mse_loss, mse_std, ssim_loss, ssim_std))
     return reference, predicted, losses
 
 def visualize(reference, observed, predicted,
@@ -383,7 +391,8 @@ def main(args):
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
                 ref, pred, losses = evaluate(test_loader, model, args)
-                _, loss, _ = losses
+                # Select best epoch via reconstruction loss
+                _, loss, _, _ = losses
             if loss < best_loss:
                 best_loss = loss
                 path = os.path.join(args.save_dir, "best.pth") 
