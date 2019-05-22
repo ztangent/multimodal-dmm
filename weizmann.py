@@ -412,10 +412,10 @@ if __name__ == "__main__":
                         help='input batch size for training (default: 50)')
     parser.add_argument('--split', type=int, default=25, metavar='K',
                         help='split data into K-sized chunks (default: 25)')
-    parser.add_argument('--epochs', type=int, default=100, metavar='N',
-                        help='number of epochs to train (default: 100)')
-    parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
-                        help='learning rate (default: 1e-4)')
+    parser.add_argument('--epochs', type=int, default=3000, metavar='N',
+                        help='number of epochs to train (default: 3000)')
+    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+                        help='learning rate (default: 5e-4)')
     parser.add_argument('--w_decay', type=float, default=0, metavar='F',
                         help='Adam weight decay (default: 0)')
     parser.add_argument('--base_rate', type=float, default=None, metavar='R',
@@ -425,11 +425,11 @@ if __name__ == "__main__":
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
                         help='max kld loss multiplier (default: 1.0)')
     parser.add_argument('--rec_mults', type=yaml.safe_load, default=None,
-                        help='reconstruction loss multiplier (default: 1/dim)')
+                        help='reconstruction loss multiplier')
     parser.add_argument('--kld_anneal', type=int, default=1500, metavar='N',
                         help='epochs to anneal kld_mult over (default: 1500)')
-    parser.add_argument('--burst_frac', type=float, default=0, metavar='F',
-                        help='burst error rate during training (default: 0)')
+    parser.add_argument('--burst_frac', type=float, default=0.2, metavar='F',
+                        help='burst error rate during training (default: 0.2)')
     parser.add_argument('--drop_frac', type=float, default=0, metavar='F',
                         help='fraction of data to randomly drop at test time')
     parser.add_argument('--start_frac', type=float, default=0, metavar='F',
