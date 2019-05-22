@@ -24,7 +24,7 @@ from datasets.multiseq import mask_to_extent
 class MultiDKS(MultiDGTS):
     def __init__(self, modalities, dims, dists=None,
                  encoders=None, decoders=None, h_dim=32, z_dim=32,
-                 z0_mean=0.0, z0_std=1.0, min_std=1e-3,
+                 z0_mean=0.0, z0_std=1.0, min_std=1e-3, feat_to_z=True,
                  rnn_dir='bwd', rnn_skip=True, rnn_layers=1, rnn_bias=True,
                  device=torch.device('cuda:0')):
         """
@@ -67,6 +67,7 @@ class MultiDKS(MultiDGTS):
         self.modalities = modalities
         self.n_mods = len(modalities)
         self.dims = dict(zip(modalities, dims))
+        self.feat_dims = dict()
         self.h_dim = h_dim
         self.z_dim = z_dim
 
@@ -79,6 +80,7 @@ class MultiDKS(MultiDGTS):
         self.enc = nn.ModuleDict()            
         # Default to linear encoder with ReLU
         for m in self.modalities:
+            self.feat_dims[m] = h_dim
             if self.dists[m] == 'Categorical':
                 self.enc[m] = nn.Sequential(
                     nn.Embedding(np.prod(self.dims[m]), h_dim),
@@ -94,6 +96,12 @@ class MultiDKS(MultiDGTS):
             if type(encoders) is list:
                 encoders = zip(modalities, encoders)
             self.enc.update(encoders)
+        # Read feature dimenions from encoders, else default to h_dim
+        for m in self.modalities:
+            if hasattr(self.enc[m], 'feat_dim'):
+                self.feat_dims[m] = self.enc[m].feat_dim
+            else:
+                self.feat_dims[m] = h_dim
         
         # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
@@ -120,16 +128,20 @@ class MultiDKS(MultiDGTS):
         self.rnn = nn.ModuleDict()
         self.h0 = nn.ParameterDict()
         for m in self.modalities:
-            if hasattr(self.enc[m], 'feat_dim'):
-                feat_dim = self.enc[m].feat_dim
-            else:
-                feat_dim = h_dim
+            feat_dim = self.feat_dims[m]
             self.rnn[m] = nn.GRU(feat_dim, h_dim, rnn_layers, rnn_bias)
             self.h0[m] = nn.Parameter(torch.zeros(rnn_layers, 1, h_dim))
 
-        # Combiner inference network q(z) = N(mu(z_prev, h), sigma(z_prev, h))
-        self.combiner = common.GaussianMLP(in_dim=z_dim + self.n_mods*h_dim,
-                                           out_dim=z_dim, h_dim=h_dim)
+        # Combiner inference network
+        self.feat_to_z = feat_to_z
+        if self.feat_to_z:
+            # Define q(z) = N(mu(z_prev, h, x), sigma(z_prev, h, x))
+            comb_dim = (z_dim + self.n_mods * h_dim +
+                        sum([self.feat_dims[m] for m in self.modalities]))
+        else:
+            # Define q(z) = N(mu(z_prev, h), sigma(z_prev, h))
+            comb_dim = z_dim + self.n_mods * h_dim
+        self.combiner = common.GaussianMLP(comb_dim, z_dim, h_dim)
 
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
@@ -190,6 +202,10 @@ class MultiDKS(MultiDGTS):
             # Flatten time and batch dimensions to pass through encoder
             input_m = input_m.flatten(0, 1)
             feats[m] = self.enc[m](input_m).reshape(t_max, b_dim, -1)
+
+        # Concatenate features across modalities
+        if self.feat_to_z:
+            feat_cat = torch.cat([feats[m] for m in self.modalities], dim=-1)
             
         # Initialize RNN hidden states
         h = {m: self.h0[m].repeat(1, b_dim, 1) for m in self.modalities}
@@ -236,7 +252,10 @@ class MultiDKS(MultiDGTS):
             prior_std.append(prior_std_t)
 
             # Infer the latent distribution p(z_t|z_{t-1}, x_{1:T})
-            comb_in = torch.cat([z_t, h_out[t]], dim=-1)
+            if self.feat_to_z:
+                comb_in = torch.cat([z_t, h_out[t], feat_cat[t]], dim=-1)
+            else:
+                comb_in = torch.cat([z_t, h_out[t]], dim=-1)
             infer_mean_t, infer_std_t = self.combiner(comb_in)
             
             # Only infer for timesteps before the last observation

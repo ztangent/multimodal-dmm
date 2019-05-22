@@ -215,6 +215,7 @@ def visualize(dataset, observed, predictions, ranges,
                     sel_obs[i], sel_pred[i], sel_rng[i])
         # Set title as metric
         axis.set_title("Metric = {:0.3f}".format(sel_metric[i]))
+        axis.set_xlabel("Spiral {:03d}".format(sel_idx[i]))
         
     plt.tight_layout()
     plt.draw()
@@ -232,20 +233,20 @@ def plot_spiral(axis, truth, data, obs, pred, rng):
     axis.add_collection(ec)
 
     # Plot ground truth
-    axis.plot(truth[0], truth[1], 'b-', linewidth=1)
+    axis.plot(truth[0], truth[1], 'b-', linewidth=1.5)
 
     # Plot observations (blue = both, magenta = x-only, yellow = y-only)
     if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
-        axis.plot(obs[0], data[1], 'm.', markersize=1.5)
-        axis.plot(data[0], obs[1], 'y.', markersize=1.5)
-    axis.plot(obs[0], obs[1], 'b.', markersize=1.5)
+        axis.plot(obs[0], data[1], 'm.', markersize=2)
+        axis.plot(data[0], obs[1], 'y.', markersize=2)
+    axis.plot(obs[0], obs[1], 'b.', markersize=2)
 
     # Plot predictions
-    axis.plot(pred[0], pred[1], 'g-', linewidth=1)
+    axis.plot(pred[0], pred[1], 'g-', linewidth=1.5)
 
     # Set limits
-    axis.set_xlim(-5, 5)
-    axis.set_ylim(-5, 5)
+    axis.set_xlim(-4, 4)
+    axis.set_ylim(-4, 4)
     
 def save_params(args, model):
     fname = 'param_hist.tsv'
