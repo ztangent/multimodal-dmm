@@ -68,11 +68,17 @@ def train(loader, model, optimizer, epoch, args):
 
 def evaluate(loader, model, args, fig_path=None):
     model.eval()
+    # Set up accumulators
+    data_num = 0
     reference = {m: [] for m in loader.dataset.modalities}
     predicted = {m: [] for m in args.modalities}
     observed = {m: [] for m in args.modalities}
-    data_num = 0
     kld_loss, rec_loss, mse_loss = [], [], []
+    # Only compute reconstruction loss for specified modalities
+    rec_mults = dict(args.rec_mults)
+    if args.eval_mods is not None:
+        for m in rec_mults:
+            rec_mults[m] *= float(m in args.eval_mods)
     for b_num, (targets, mask, lengths, order) in enumerate(loader):
         # Send to device
         mask = mask.to(args.device)
@@ -430,7 +436,7 @@ if __name__ == "__main__":
                         help='epochs to anneal kld_mult over (default: 1500)')
     parser.add_argument('--burst_frac', type=float, default=0.2, metavar='F',
                         help='burst error rate during training (default: 0.2)')
-    parser.add_argument('--drop_frac', type=float, default=0, metavar='F',
+    parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
                         help='fraction of data to randomly drop at test time')
     parser.add_argument('--start_frac', type=float, default=0, metavar='F',
                         help='fraction of test trajectory to begin at')
@@ -438,6 +444,8 @@ if __name__ == "__main__":
                         help='fraction of test trajectory to stop at')
     parser.add_argument('--drop_mods', type=str, default=[], nargs='+',
                         help='modalities to delete at test (default: none')
+    parser.add_argument('--eval_mods', type=str, default=None, nargs='+',
+                        help='modalities to evaluate at test (default: none')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
