@@ -377,7 +377,7 @@ def main(args):
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
                 ref, pred, losses = evaluate(test_loader, model, args)
-                _, _, loss = losses
+                _, loss, _ = losses
             if loss < best_loss:
                 best_loss = loss
                 path = os.path.join(args.save_dir, "best.pth") 
