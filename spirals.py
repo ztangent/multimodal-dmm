@@ -126,7 +126,7 @@ def eval_suite(item, truth, model, args):
         targets[m] = targets[m].to(args.device)
 
     # Process inputs for each evaluation task
-    tasks = ['Recon.', 'Drop Half', 'Extra. Fwd.', 'Extra. Bwd.', 'Cond. Gen']
+    tasks = ['Recon.', 'Drop Half', 'Fwd. Extra.', 'Bwd. Extra.', 'Cond. Gen']
     inputs = dict()
     # For reconstruction provide complete inputs
     inputs[tasks[0]] = {m: targets[m].clone().detach() for m in targets}
@@ -179,9 +179,11 @@ def eval_suite(item, truth, model, args):
         axes[i].set_title(task)
         axes[i].set_xticks([], [])
         axes[i].set_yticks([], [])
+        for spine in axes[i].spines.values():
+            spine.set_visible(False)        
         axes[i].set_xlabel("MSE: {:0.3f}".format(mse))
         if i == 0:
-            axes[i].set_ylabel(args.model.upper())
+            axes[i].set_ylabel(args.model)
         
     # Display and save figure
     plt.draw()
@@ -235,14 +237,14 @@ def plot_spiral(axis, truth, data, obs, pred, rng):
     # Plot ground truth
     axis.plot(truth[0], truth[1], 'b-', linewidth=1.5)
 
-    # Plot observations (blue = both, magenta = x-only, yellow = y-only)
+    # Plot observations (blue = both, pink = x-only, yellow = y-only)
     if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
-        axis.plot(obs[0], data[1], 'm.', markersize=2)
-        axis.plot(data[0], obs[1], 'y.', markersize=2)
-    axis.plot(obs[0], obs[1], 'b.', markersize=2)
+        axis.plot(obs[0], data[1], '<', markersize=2, color='#fe46a5')
+        axis.plot(data[0], obs[1], 'v', markersize=2, color='#fec615')
+    axis.plot(obs[0], obs[1], 'bo', markersize=3)
 
     # Plot predictions
-    axis.plot(pred[0], pred[1], 'g-', linewidth=1.5)
+    axis.plot(pred[0], pred[1], '-', linewidth=1.5, color='#04d8b2')
 
     # Set limits
     axis.set_xlim(-4, 4)
