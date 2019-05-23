@@ -122,7 +122,7 @@ def evaluate(loader, model, args, fig_path=None):
         # Compute prediction accuracy for action and person labels
         for m in ['action', 'person']:
             rec, tgt = recon[m][0], targets[m]
-            correct = (rec.argmax(dim=-1) == tgt)
+            correct = (rec.argmax(dim=-1) == tgt.squeeze(-1).long())
             acc = correct.sum(dim=0).float() / lens
             accuracy[m] += acc[order].tolist()
     # Plot predictions against truth
@@ -144,7 +144,7 @@ def evaluate(loader, model, args, fig_path=None):
           format(kld_loss, rec_loss))
     print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
           format(mse_loss, mse_std, ssim_loss, ssim_std))
-    print('\t\tAction: {:2.3f} +/- {:2.3f}\tPerson: {:2.3f} +/- {:2.3f}'.\
+    print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
           format(action_acc, action_std, person_acc, person_std))
     return reference, predicted, losses
 
