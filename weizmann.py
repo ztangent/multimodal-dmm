@@ -313,6 +313,7 @@ def main(args):
              'person': 'Categorical',
              'action': 'Categorical'}
     if hasattr(models, args.model):
+        print('Constructing model...')
         constructor = getattr(models, args.model)
         gauss_out = (args.model != 'MultiDKS')
         image_encoder = models.common.ImageEncoder(256, gauss_out)
@@ -324,8 +325,9 @@ def main(args):
                             decoders={'video': image_decoder},
                             z_dim=256, h_dim=256,
                             device=args.device, **args.model_args)
-        # model.z0_mean.requires_grad = False
-        # model.z0_log_std.requires_grad = False
+        n_params = sum(p.numel() for p in model.parameters()
+                       if p.requires_grad)
+        print('Number of parameters:', n_params)
     else:
         print('Model name not recognized.')
         return
