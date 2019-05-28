@@ -127,7 +127,7 @@ def evaluate(loader, model, args, fig_path=None):
             accuracy[m] += acc[order].tolist()
     # Plot predictions against truth
     if args.visualize:
-         visualize(reference, observed, predicted, mse_loss, args, fig_path)
+         visualize(reference, observed, predicted, ssim_loss, args, fig_path)
     # Average losses and print
     kld_loss = sum(kld_loss) / data_num
     rec_loss = sum(rec_loss) / data_num
@@ -152,65 +152,100 @@ def visualize(reference, observed, predicted,
               metric, args, fig_path=None):
     """Plots predictions against truth for representative fits."""
     # Select best and worst predictions
-    sel_idx = np.concatenate((np.argsort(metric)[:1],
-                              np.argsort(metric)[-1:][::-1]))
+    sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
+                              np.argsort(metric)[:1]))
     sel_metric = [metric[i] for i in sel_idx]
     sel_true = [reference['video'][i] for i in sel_idx]
     sel_obsv = [observed['video'][i] for i in sel_idx]
     sel_pred = [predicted['video'][i] for i in sel_idx]
 
     sel_true_act = [reference['action'][i] for i in sel_idx]
+    sel_obsv_act = [observed['action'][i] for i in sel_idx]
     if 'action' in predicted.keys():
         sel_pred_act = [predicted['action'][i] for i in sel_idx]
     else:
         sel_pred_act = [None] * len(sel_idx)
 
-    # Set current figure
-    plt.figure(args.fig.number)
+    if not hasattr(args, 'fig'):
+        # Create figure to visualize predictions
+        args.fig, args.axes = plt.subplots(
+            nrows=3*len(sel_idx), ncols=1, figsize=(8,4*len(sel_idx)+0.5),
+            subplot_kw={'aspect': 'equal'})
+    else:
+        # Set current figure
+        plt.figure(args.fig.number)
+    axes = args.axes
+    
     for i in range(len(sel_idx)):
         true, obsv, pred = sel_true[i], sel_obsv[i], sel_pred[i]
-        true_act, pred_act = sel_true_act[i], sel_pred_act[i]
-        m = sel_metric[i]
-        # Plot start, end, and trisection points of each video
-        t_max = len(obsv)
-        frames = [0, t_max//3, t_max-1 - t_max//3, t_max-1]
-        for j, t in enumerate(frames):
-            # Plot observed image
-            ax = args.axes[2*i, j]
-            ax.cla()
-            ax.set_xticks([], [])
-            ax.set_yticks([], [])
-            img = obsv[t].transpose((1,2,0))
-            ax.imshow(img)
-            act_name = weizmann.actions[int(true_act[t])]
-            ax.set_title("t = {}".format(t))
-            ax.set_xlabel("Act: {}".format(act_name))
-            if j == 0:
-                ax.set_ylabel("Observations")                
+        t_act, o_act, p_act = sel_true_act[i], sel_obsv_act[i], sel_pred_act[i]
 
-            # Plot predicted image
-            ax = args.axes[2*i+1, j]
-            ax.cla()
-            ax.set_xticks([], [])
-            ax.set_yticks([], [])
-            img = pred[t].transpose((1,2,0))
-            ax.imshow(img)
-            if pred_act is None:
-                act_name, act_prob = 'N/A', float('nan')
-            else:
-                act_id, act_prob = np.argmax(pred_act[t]), np.max(pred_act[t])
-                act_name = weizmann.actions[act_id]
-            ax.set_title("t = {}".format(t))
-            ax.set_xlabel("Act: {} ({:0.2f})".format(act_name, act_prob))
-            if j == 0:
-                ax.set_ylabel("Reconstructions")
-            
+        # Stitch equally-spaced frames into a storyboard row
+        frames = np.linspace(0, len(true)-1, 8, dtype=int)
+
+        true_board = [np.hstack([true[t].transpose(1, 2, 0),
+                                 np.ones(shape=(64, 1, 3))]) for t in frames]
+        true_board = np.hstack(true_board)
+        
+        obsv_board = [np.hstack([obsv[t].transpose(1, 2, 0),
+                                 np.ones(shape=(64, 1, 3))]) for t in frames]
+        obsv_board = np.hstack(obsv_board)
+        obsv_board[np.isnan(obsv_board)] = 1.0 # Set missing frames to white
+
+        pred_board = [np.hstack([pred[t].transpose(1, 2, 0),
+                                 np.ones(shape=(64, 1, 3))]) for t in frames]
+        pred_board = np.hstack(pred_board)
+
+        # Read predicted action names
+        pred_probs = p_act.max(axis=1)
+        p_act = [weizmann.actions[a] for a in p_act.argmax(axis=1)]
+        t_labels = [weizmann.actions[int(t_act[t])] for t in frames]
+        o_labels = ['' if (o_act[t] != o_act[t]) else
+                    weizmann.actions[int(o_act[t])] for t in frames]
+        p_labels = ['{} ({:0.1f})'.format(p_act[t], pred_probs[t])
+                       for t in frames]
+        
+        # Plot original video
+        plt.sca(axes[3*i])
+        plt.cla()
+        plt.xticks(np.arange(32, 65 * len(frames), 65), t_labels)
+        plt.yticks([])
+        plt.imshow(true_board)
+        plt.ylabel("Original")
+        plt.gca().tick_params(length=0)
+        
+        # Plot observations
+        plt.sca(axes[3*i+1])
+        plt.cla()
+        plt.xticks(np.arange(32, 65 * len(frames), 65), o_labels)
+        plt.yticks([])
+        plt.imshow(obsv_board)
+        plt.ylabel("Observed")
+        plt.gca().tick_params(length=0)
+
+        # Plot reconstructed video
+        plt.sca(axes[3*i+2])
+        plt.cla()
+        plt.xticks(np.arange(32, 65 * len(frames), 65), p_labels)
+        plt.yticks([])
+        plt.imshow(pred_board)
+        plt.ylabel("Reconstructed")
+        plt.gca().tick_params(length=0)
+
+        # Display metric as title on top of original video
+        axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
+                            fontdict={'fontsize': 10}, loc='right')
+        
+    for i in range(len(axes)):
+        for spine in axes[i].spines.values():
+            spine.set_visible(False)        
+        
     plt.tight_layout()
     plt.draw()
     if fig_path is not None:
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
-
+    
 def save_results(reference, predicted, args):
     """Save results to video."""
     print("Saving results...")
@@ -345,13 +380,6 @@ def main(args):
     # Create path to save models/predictions
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
-
-    # Create figure to visualize predictions
-    if args.visualize:
-        args.fig, args.axes = plt.subplots(
-            nrows=4, ncols=4, figsize=(8,8),
-            subplot_kw={'aspect': 'equal'}
-        )
         
     # Evaluate model if test flag is set
     if args.test:
