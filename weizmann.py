@@ -139,14 +139,15 @@ def evaluate(loader, model, args, fig_path=None):
     action_acc = sum(accuracy['action']) / len(accuracy['action'])
     person_std = np.std(accuracy['person'])
     person_acc = sum(accuracy['person']) / len(accuracy['person'])
-    losses = kld_loss, rec_loss, mse_loss, ssim_loss
     print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
           format(kld_loss, rec_loss))
     print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
           format(mse_loss, mse_std, ssim_loss, ssim_std))
     print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
           format(action_acc, action_std, person_acc, person_std))
-    return reference, predicted, losses
+    results = reference, observed, predicted
+    losses = kld_loss, rec_loss, mse_loss, ssim_loss
+    return results, losses
 
 def visualize(reference, observed, predicted,
               metric, args, fig_path=None):
@@ -246,31 +247,96 @@ def visualize(reference, observed, predicted,
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
     
-def save_results(reference, predicted, args):
+def save_results(results, args):
     """Save results to video."""
     print("Saving results...")
+    reference, observed, predicted = results
     
-    for i, video in enumerate(predicted['video']):
-        # Tranpose video to T * H * W * C
-        video = video.transpose((0,2,3,1))
-        # Construct file name as [person]_[action].avi
-        p_id, a_id = reference['person'][i][0], reference['action'][i][0]
-        person = weizmann.persons[int(p_id)]
-        action = weizmann.actions[int(a_id)]
-        path = os.path.join(args.save_dir, '{}_{}.avi'.format(person, action))
-        # Create video writer for uncompressed 25 fps video
-        vwriter = cv.VideoWriter(path, 0, 25.0, video.shape[1:3])
+    # Default save args
+    save_args = {'one_file': True,
+                 'filename': 'results.avi',
+                 'labels': True,
+                 'comparison': True}
+    save_args.update(args.save_args)
+
+    # Define frame rate and video dimensions
+    shape = reference['video'][0].shape[2:4]
+    if save_args['comparison']:
+        shape = (shape[0]*3, shape[1])
+    fps = 25.0
+    
+    # Create video writer for single output file
+    if save_args['one_file']:
+        path = os.path.join(args.save_dir, args.save_args['filename'])
+        vwriter = cv.VideoWriter(path, 0, fps, shape)
+
+    # Helper functions
+    def preprocess(frame):
+        return cv.cvtColor((frame * 255).astype('uint8'), cv.COLOR_RGB2BGR)
+    def add_label(image, text, pos):
+        cv.putText(image, text, pos, cv.FONT_HERSHEY_SIMPLEX,
+                   0.4, (255, 255, 255), 1, cv.LINE_AA)
+        
+    # Iterate over videos
+    for i in range(len(reference['video'])):
+        # Transpose videos to T * H * W * C
+        r_vid = reference['video'][i].transpose((0,2,3,1))
+        o_vid = observed['video'][i].transpose((0,2,3,1))
+        p_vid = predicted['video'][i].transpose((0,2,3,1))
+                
+        if not save_args['one_file']:
+            # Construct file name as [person]_[action].avi
+            p_id, a_id = reference['person'][i][0], reference['action'][i][0]
+            person = weizmann.persons[int(p_id)]
+            action = weizmann.actions[int(a_id)]
+            path = '{}_{}.avi'.format(person, action)
+            path = os.path.join(args.save_dir, path)
+            # Create video writer for file
+            vwriter = cv.VideoWriter(path, 0, fps, shape)
 
         # Iterate over frames
-        for t, frame in enumerate(video):
-            frame = (frame * 255).astype('uint8')
-            frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
-            if 'action' in predicted:
-                act_probs = predicted['action'][i][t]
-                act_str = weizmann.actions[np.argmax(act_probs)]
-                cv.putText(frame, act_str, (0, 15), cv.FONT_HERSHEY_SIMPLEX,
-                           0.5, (255, 255, 255), 1, cv.LINE_AA)
+        for t in range(len(p_vid)):
+            frame = preprocess(p_vid[t])
+            if save_args['labels']:
+                # Add text labels
+                if 'action' in predicted:
+                    probs = predicted['action'][i][t]
+                    text = weizmann.actions[np.argmax(probs)]
+                    add_label(frame, text, (2, 10))
+                if 'person' in predicted:
+                    probs = predicted['person'][i][t]
+                    text = weizmann.persons[np.argmax(probs)]
+                    add_label(frame, text, (2, 60))
+
+            if not save_args['comparison']:
+                vwriter.write(frame)
+                continue
+
+            # Combine frames for side-by-side comparison
+            p_frame = frame
+            r_frame, o_frame = preprocess(r_vid[t]), preprocess(o_vid[t])
+            if save_args['labels']:
+                # Add text labels
+                r_idx = reference['action'][i][t]
+                o_idx = observed['action'][i][t]
+                text = weizmann.actions[int(r_idx)]
+                add_label(r_frame, text, (2, 10))
+                if o_idx == o_idx: #NaN check
+                    add_label(o_frame, text, (2, 10))
+                
+                r_idx = reference['person'][i][t]
+                o_idx = observed['person'][i][t]
+                text = weizmann.persons[int(r_idx)]
+                add_label(r_frame, text, (2, 60))
+                if o_idx == o_idx: #NaN check
+                    add_label(o_frame, text, (2, 60))
+            frame = np.hstack([r_frame, o_frame, p_frame])
             vwriter.write(frame)
+                    
+        if not save_args['one_file']:
+            vwriter.release()
+
+    if save_args['one_file']:
         vwriter.release()
 
 def save_params(args, model):
@@ -399,18 +465,20 @@ def main(args):
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            ref, pred, _  = evaluate(eval_loader, model, args,
-                                     os.path.join(args.save_dir, "train.pdf"))
-            save_results(ref, pred, args)
+            results, _  = evaluate(eval_loader, model, args,
+                                   os.path.join(args.save_dir, "train.pdf"))
+            args.save_args['filename'] = 'train.avi'
+            save_results(results, args)
             
         print("--Testing--")
         eval_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            ref, pred, _  = evaluate(eval_loader, model, args,
-                                     os.path.join(args.save_dir, "test.pdf"))
-            save_results(ref, pred, args)
+            results, _  = evaluate(eval_loader, model, args,
+                                   os.path.join(args.save_dir, "test.pdf"))
+            args.save_args['filename'] = 'test.avi'
+            save_results(results, args)
 
         # Save command line flags, model params
         save_params(args, model)
@@ -465,6 +533,8 @@ if __name__ == "__main__":
                         help='additional training arguments as yaml dict')
     parser.add_argument('--eval_args', type=yaml.safe_load, default=dict(),
                         help='additional evaluation arguments as yaml dict')
+    parser.add_argument('--save_args', type=yaml.safe_load, default=dict(),
+                        help='results saving arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
                         help='input modalities (default: all')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
