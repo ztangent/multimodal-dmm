@@ -320,11 +320,15 @@ def main(args):
     # Construct model
     dims = {'spiral-x': 1, 'spiral-y': 1}
     if hasattr(models, args.model):
+        print('Constructing model...')
         constructor = getattr(models, args.model)
         model = constructor(args.modalities,
                             dims=(dims[m] for m in args.modalities),
                             z_dim=5, h_dim=20,
                             device=args.device, **args.model_args)
+        n_params = sum(p.numel() for p in model.parameters()
+                       if p.requires_grad)
+        print('Number of parameters:', n_params)
     else:
         print('Model name not recognized.')
         return
