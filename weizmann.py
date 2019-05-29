@@ -29,6 +29,7 @@ def train(loader, model, optimizer, epoch, args):
     data_num = 0
     log_freq = len(loader) // args.log_freq
     rec_mults = dict(args.rec_mults)
+    # Iterate over batches
     for b_num, (targets, mask, lengths, _) in enumerate(loader):
         # Anneal KLD loss multipliers
         b_tot = b_num + epoch*len(loader)
@@ -68,15 +69,14 @@ def evaluate(loader, model, args):
     model.eval()
     # Set up accumulators
     n_timesteps = 0
-    reference = {m: [] for m in loader.dataset.modalities}
-    predicted = {m: [] for m in args.modalities}
-    observed = {m: [] for m in args.modalities}
     metrics = None
+    results = {'targets': [], 'inputs': [], 'recon': []}
     # Only compute reconstruction loss for specified modalities
     rec_mults = dict(args.rec_mults)
     if args.eval_mods is not None:
         for m in rec_mults:
             rec_mults[m] *= float(m in args.eval_mods)
+    # Iterate over batches
     for b_num, (targets, mask, lengths, order) in enumerate(loader):
         # Send to device
         mask = mask.to(args.device)
@@ -95,23 +95,25 @@ def evaluate(loader, model, args):
                                     **args.eval_args)
         # Keep track of total number of time-points
         n_timesteps += sum(lengths)
-        # Decollate and store observations and predictions
-        for m in targets.keys():
-            reference[m] += mseq.seq_decoll(targets[m], lengths, order)
-        for m in recon.keys():
-            observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
-            predicted[m] += mseq.seq_decoll(recon[m][0], lengths, order)
         # Compute and accumulate metrics for this batch
         b_metrics = compute_metrics(model, infer, prior, recon,
                                     targets, mask, lengths, order, args)
         metrics = (b_metrics if metrics is None else
                    {k: metrics[k] + b_metrics[k] for k in metrics})
+        # Decollate and store observations and predictions
+        results['targets'].append(mseq.seq_decoll_dict(targets,lengths,order))
+        results['inputs'].append(mseq.seq_decoll_dict(inputs,lengths,order))
+        results['recon'].append(mseq.seq_decoll_dict(recon,lengths,order))
+    # Concatenate results across batches
+    for k in results:
+        modalities = results[k][0].keys()
+        results[k] = {m: [seq for batch in results[k] for seq in batch[m]] for
+                      m in modalities}
     # Plot predictions against truth
     if args.visualize:
-         visualize(reference, observed, predicted, metrics['ssim'], args)
+         visualize(results, metrics['ssim'], args)
     # Summarize and print metrics
     metrics = summarize_metrics(metrics, n_timesteps)
-    results = reference, observed, predicted
     return results, metrics
 
 def compute_metrics(model, infer, prior, recon,
@@ -174,20 +176,24 @@ def summarize_metrics(metrics, n_timesteps):
                  summary['person'], summary['person_std']))
     return summary
 
-def visualize(reference, observed, predicted, metric, args):
+def visualize(results, metric, args):
     """Plots predictions against truth for representative fits."""
+    reference = results['targets']
+    observed = results['inputs']
+    predicted = results['recon']
+    
     # Select best and worst predictions
     sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
                               np.argsort(metric)[:1]))
     sel_metric = [metric[i] for i in sel_idx]
     sel_true = [reference['video'][i] for i in sel_idx]
     sel_obsv = [observed['video'][i] for i in sel_idx]
-    sel_pred = [predicted['video'][i] for i in sel_idx]
+    sel_pred = [predicted['video'][i][:,0] for i in sel_idx]
 
     sel_true_act = [reference['action'][i] for i in sel_idx]
     sel_obsv_act = [observed['action'][i] for i in sel_idx]
     if 'action' in predicted.keys():
-        sel_pred_act = [predicted['action'][i] for i in sel_idx]
+        sel_pred_act = [predicted['action'][i][:,0] for i in sel_idx]
     else:
         sel_pred_act = [None] * len(sel_idx)
 
@@ -200,67 +206,59 @@ def visualize(reference, observed, predicted, metric, args):
         # Set current figure
         plt.figure(args.fig.number)
     axes = args.axes
+
+    # Helper function to stitch video snapshots into storyboard
+    def stitch(video, times):
+        board = [np.hstack([video[t].transpose(1, 2, 0),
+                            np.ones(shape=(64, 1, 3))]) for t in times]
+        return np.hstack(board)
+
+    # Helper function to plot a storyboard on current axis
+    def plot_board(board, tick_labels, y_label):
+        plt.cla()
+        plt.xticks(np.arange(32, 65 * len(tick_labels), 65), tick_labels)
+        plt.yticks([])
+        plt.imshow(board)
+        plt.ylabel(y_label)
+        plt.gca().tick_params(length=0)
     
     for i in range(len(sel_idx)):
         true, obsv, pred = sel_true[i], sel_obsv[i], sel_pred[i]
         t_act, o_act, p_act = sel_true_act[i], sel_obsv_act[i], sel_pred_act[i]
 
         # Stitch equally-spaced frames into a storyboard row
-        frames = np.linspace(0, len(true)-1, 8, dtype=int)
-
-        true_board = [np.hstack([true[t].transpose(1, 2, 0),
-                                 np.ones(shape=(64, 1, 3))]) for t in frames]
-        true_board = np.hstack(true_board)
+        times = np.linspace(0, len(true)-1, 8, dtype=int)
+        true_board = stitch(true, times)
+        obsv_board = stitch(obsv, times)
+        pred_board = stitch(pred, times)
         
-        obsv_board = [np.hstack([obsv[t].transpose(1, 2, 0),
-                                 np.ones(shape=(64, 1, 3))]) for t in frames]
-        obsv_board = np.hstack(obsv_board)
-        obsv_board[np.isnan(obsv_board)] = 1.0 # Set missing frames to white
-
-        pred_board = [np.hstack([pred[t].transpose(1, 2, 0),
-                                 np.ones(shape=(64, 1, 3))]) for t in frames]
-        pred_board = np.hstack(pred_board)
+        # Set missing observations to white
+        obsv_board[np.isnan(obsv_board)] = 1.0 
 
         # Read predicted action names
         pred_probs = p_act.max(axis=1)
         p_act = [weizmann.actions[a] for a in p_act.argmax(axis=1)]
-        t_labels = [weizmann.actions[int(t_act[t])] for t in frames]
+        t_labels = [weizmann.actions[int(t_act[t])] for t in times]
         o_labels = ['' if (o_act[t] != o_act[t]) else
-                    weizmann.actions[int(o_act[t])] for t in frames]
+                    weizmann.actions[int(o_act[t])] for t in times]
         p_labels = ['{} ({:0.1f})'.format(p_act[t], pred_probs[t])
-                       for t in frames]
+                    for t in times]
         
         # Plot original video
         plt.sca(axes[3*i])
-        plt.cla()
-        plt.xticks(np.arange(32, 65 * len(frames), 65), t_labels)
-        plt.yticks([])
-        plt.imshow(true_board)
-        plt.ylabel("Original")
-        plt.gca().tick_params(length=0)
-        
+        plot_board(true_board, t_labels, "Original")
         # Plot observations
         plt.sca(axes[3*i+1])
-        plt.cla()
-        plt.xticks(np.arange(32, 65 * len(frames), 65), o_labels)
-        plt.yticks([])
-        plt.imshow(obsv_board)
-        plt.ylabel("Observed")
-        plt.gca().tick_params(length=0)
-
+        plot_board(obsv_board, o_labels, "Observed")
         # Plot reconstructed video
         plt.sca(axes[3*i+2])
-        plt.cla()
-        plt.xticks(np.arange(32, 65 * len(frames), 65), p_labels)
-        plt.yticks([])
-        plt.imshow(pred_board)
-        plt.ylabel("Reconstructed")
-        plt.gca().tick_params(length=0)
+        plot_board(pred_board, p_labels, "Reconstructed")
 
         # Display metric as title on top of original video
         axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
                             fontdict={'fontsize': 10}, loc='right')
-        
+
+    # Remove axis borders
     for i in range(len(axes)):
         for spine in axes[i].spines.values():
             spine.set_visible(False)        
@@ -274,7 +272,9 @@ def visualize(reference, observed, predicted, metric, args):
 def save_results(results, args):
     """Save results to video."""
     print("Saving results...")
-    reference, observed, predicted = results
+    reference = results['targets']
+    observed = results['inputs']
+    predicted = results['recon']
     
     # Default save args
     save_args = {'one_file': True,
@@ -306,7 +306,7 @@ def save_results(results, args):
         # Transpose videos to T * H * W * C
         r_vid = reference['video'][i].transpose((0,2,3,1))
         o_vid = observed['video'][i].transpose((0,2,3,1))
-        p_vid = predicted['video'][i].transpose((0,2,3,1))
+        p_vid = predicted['video'][i][:,0].transpose((0,2,3,1))
                 
         if not save_args['one_file']:
             # Construct file name as [person]_[action].avi
@@ -324,11 +324,11 @@ def save_results(results, args):
             if save_args['labels']:
                 # Add text labels
                 if 'action' in predicted:
-                    probs = predicted['action'][i][t]
+                    probs = predicted['action'][i][t,0]
                     text = weizmann.actions[np.argmax(probs)]
                     add_label(frame, text, (2, 10))
                 if 'person' in predicted:
-                    probs = predicted['person'][i][t]
+                    probs = predicted['person'][i][t,0]
                     text = weizmann.persons[np.argmax(probs)]
                     add_label(frame, text, (2, 60))
 
@@ -521,7 +521,7 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                results, metrics = evaluate(test_loader, model, args)
+                _, metrics = evaluate(test_loader, model, args)
                 loss = metrics['rec_loss'] # Save best reconstruction loss
             if loss < best_loss:
                 best_loss = loss

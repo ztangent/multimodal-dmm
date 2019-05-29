@@ -347,7 +347,11 @@ def seq_collate_dict(data, time_first=True):
 
 def seq_decoll(batch, lengths, order, time_first=True):
     """Decollate batched data by de-padding and reordering."""
-    if time_first:
+    if type(batch) is tuple:
+        # Stack each batch in tuple along 2nd dimension
+        data = [np.stack([b[:lengths[idx],idx].cpu().numpy()
+                          for b in batch], axis=1) for idx in order]
+    elif time_first:
         data = [batch[:lengths[idx],idx].cpu().numpy() for idx in order]
     else:
         data = [batch[idx,:lengths[idx]].cpu().numpy() for idx in order]
@@ -355,8 +359,8 @@ def seq_decoll(batch, lengths, order, time_first=True):
 
 def seq_decoll_dict(batch_dict, lengths, order, time_first=True):
     """Decollate dictionary of batch tensors into dictionary of lists"""
-    return {k: seq_decollate(batch, lengths, order, time_first)
-            for k, batch in batch_dict.iteritems()}
+    return {k: seq_decoll(batch, lengths, order, time_first)
+            for k, batch in batch_dict.items()}
 
 def func_delete(batch_in, del_func, lengths=None, modalities=None):
     """Use del_func to compute time indices to delete. Assumes time_first."""
