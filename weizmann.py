@@ -87,9 +87,11 @@ def evaluate(loader, model, args):
         # Remove init/final fraction of observations to test extrapolation
         inputs = mseq.keep_segment(inputs, args.start_frac,
                                    args.stop_frac, lengths)
-        # Remove specified modalities to test conditioned generation
+        # Remove / keep specified modalities to test conditioned generation
         for m in args.drop_mods:
             inputs[m][:] = float('nan')
+        for m in args.keep_mods:
+            inputs[m] = targets[m].clone().detach()
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, recon = model(inputs, lengths=lengths, sample=False,
                                     **args.eval_args)
@@ -111,7 +113,7 @@ def evaluate(loader, model, args):
                       m in modalities}
     # Plot predictions against truth
     if args.visualize:
-         visualize(results, metrics['ssim'], args)
+         visualize(results, metrics[args.viz_metric], args)
     # Summarize and print metrics
     metrics = summarize_metrics(metrics, n_timesteps)
     return results, metrics
@@ -265,8 +267,9 @@ def visualize(results, metric, args):
         
     plt.tight_layout()
     plt.draw()
-    if args.fig_path is not None:
-        plt.savefig(args.fig_path)
+    if args.eval_set is not None:
+        fig_path = os.path.join(args.save_dir, args.eval_set + '.pdf')
+        plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
     
 def save_results(results, args):
@@ -278,7 +281,7 @@ def save_results(results, args):
     
     # Default save args
     save_args = {'one_file': True,
-                 'filename': 'results.avi',
+                 'filename': args.eval_set + '.avi',
                  'labels': True,
                  'comparison': True}
     save_args.update(args.save_args)
@@ -291,7 +294,7 @@ def save_results(results, args):
     
     # Create video writer for single output file
     if save_args['one_file']:
-        path = os.path.join(args.save_dir, args.save_args['filename'])
+        path = os.path.join(args.save_dir, save_args['filename'])
         vwriter = cv.VideoWriter(path, 0, fps, shape)
 
     # Helper functions
@@ -410,7 +413,7 @@ def main(args):
     args.device = (torch.device(args.device) if torch.cuda.is_available()
                    else torch.device('cpu'))
 
-    # Load model if specified, or test/feature flags are set
+    # Load model if specified
     checkpoint = None
     if args.load is not None:
         checkpoint = load_checkpoint(args.load, args.device)
@@ -481,8 +484,7 @@ def main(args):
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            args.fig_path = os.path.join(args.save_dir, 'train.pdf')
-            args.save_args['filename'] = 'train.avi'
+            args.eval_set = 'train'
             results, _  = evaluate(eval_loader, model, args)
             save_results(results, args)
             
@@ -491,8 +493,7 @@ def main(args):
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            args.fig_path = os.path.join(args.save_dir, 'test.pdf')
-            args.save_args['filename'] = 'test.avi'
+            args.eval_set = 'test'
             results, _  = evaluate(eval_loader, model, args)
             save_results(results, args)
 
@@ -511,18 +512,16 @@ def main(args):
                              collate_fn=mseq.seq_collate_dict,
                              shuffle=False, pin_memory=True)
 
-    # Set figure path to None
-    args.fig_path = None
-    
     # Train and save best model
     best_loss = float('inf')
+    args.eval_set = None
     for epoch in range(1, args.epochs + 1):
         print('---')
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
                 _, metrics = evaluate(test_loader, model, args)
-                loss = metrics['rec_loss'] # Save best reconstruction loss
+                loss = metrics[args.eval_metric]
             if loss < best_loss:
                 best_loss = loss
                 path = os.path.join(args.save_dir, "best.pth")
@@ -554,7 +553,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_args', type=yaml.safe_load, default=dict(),
                         help='results saving arguments as yaml dict')
     parser.add_argument('--modalities', type=str, default=None, nargs='+',
-                        help='input modalities (default: all')
+                        help='input modalities (default: all)')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
                         help='input batch size for training (default: 50)')
     parser.add_argument('--split', type=int, default=25, metavar='K',
@@ -585,8 +584,14 @@ if __name__ == "__main__":
                         help='fraction of test trajectory to stop at')
     parser.add_argument('--drop_mods', type=str, default=[], nargs='+',
                         help='modalities to delete at test (default: none')
+    parser.add_argument('--keep_mods', type=str, default=[], nargs='+',
+                        help='modalities to retain at test (default: none')
     parser.add_argument('--eval_mods', type=str, default=None, nargs='+',
                         help='modalities to evaluate at test (default: none')
+    parser.add_argument('--eval_metric', type=str, default='rec_loss',
+                        help='metric to track best model (default: rec_loss)')
+    parser.add_argument('--viz_metric', type=str, default='ssim',
+                        help='metric for visualization (default: ssim)')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',

@@ -64,13 +64,18 @@ def train(loader, model, optimizer, epoch, args):
           format(epoch, loss, kld_mult))
     return loss
 
-def evaluate(loader, model, args, fig_path=None):
+def evaluate(loader, model, args):
     model.eval()
-    predictions = {m: [] for m in model.modalities}
-    observed = {m: [] for m in model.modalities}
-    ranges = {m: [] for m in model.modalities}
-    data_num = 0
-    kld_loss, rec_loss, mse_loss = [], [], []
+    # Set up accumulators
+    n_timesteps = 0
+    metrics = None
+    results = {'targets': [], 'inputs': [], 'recon': []}
+    # Only compute reconstruction loss for specified modalities
+    rec_mults = dict(args.rec_mults)
+    if args.eval_mods is not None:
+        for m in rec_mults:
+            rec_mults[m] *= float(m in args.eval_mods)
+    # Iterate over batches
     for b_num, (targets, mask, lengths, order) in enumerate(loader):
         # Send to device
         mask = mask.to(args.device)
@@ -81,167 +86,136 @@ def evaluate(loader, model, args, fig_path=None):
         # Remove init/final fraction of observations to test extrapolation
         inputs = mseq.keep_segment(inputs, args.start_frac,
                                    args.stop_frac, lengths)
+        # Remove / keep specified modalities to test conditioned generation
+        for m in args.drop_mods:
+            inputs[m][:] = float('nan')
+        for m in args.keep_mods:
+            inputs[m] = targets[m].clone().detach()
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, recon = model(inputs, lengths=lengths, sample=False,
                                     **args.eval_args)
-        # Compute and store KLD and reconstruction losses
-        kld_loss.append(model.kld_loss(infer, prior, mask))
-        rec_loss.append(model.rec_loss(targets, recon, mask, args.rec_mults))
         # Keep track of total number of time-points
-        data_num += sum(lengths)
+        n_timesteps += sum(lengths)
+        # Compute and accumulate metrics for this batch
+        b_metrics = compute_metrics(model, infer, prior, recon,
+                                    targets, mask, lengths, order, args)
+        metrics = (b_metrics if metrics is None else
+                   {k: metrics[k] + b_metrics[k] for k in metrics})
         # Decollate and store observations and predictions
-        for m in recon.keys():
-            observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
-            predictions[m] += mseq.seq_decoll(recon[m][0], lengths, order)
-            ranges[m] += mseq.seq_decoll(1.96 * recon[m][1], lengths, order)
-        # Compute mean squared error for each timestep
-        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
-        mse = mse.sum(dim=range(2, mse.dim()))
-        # Average across timesteps, for each sequence
-        mse[1 - mask.squeeze(-1)] = 0.0
-        mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
-        mse_loss += mse[order].tolist()
+        results['targets'].append(mseq.seq_decoll_dict(targets,lengths,order))
+        results['inputs'].append(mseq.seq_decoll_dict(inputs,lengths,order))
+        results['recon'].append(mseq.seq_decoll_dict(recon,lengths,order))
+    # Concatenate results across batches
+    for k in results:
+        modalities = results[k][0].keys()
+        results[k] = {m: [seq for batch in results[k] for seq in batch[m]] for
+                      m in modalities}
     # Plot predictions against truth
     if args.visualize:
-        visualize(loader.dataset, observed, predictions, ranges,
-                  mse_loss, args, fig_path)
-    # Average losses and print
-    kld_loss = sum(kld_loss) / data_num
-    rec_loss = sum(rec_loss) / data_num
-    mse_std = np.std(mse_loss)
-    mse_loss = sum(mse_loss) / len(mse_loss)
-    losses = kld_loss, rec_loss, mse_loss
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f} +-{:2.3f}'\
-          .format(kld_loss, rec_loss, mse_loss, mse_std))
-    return predictions, losses
+         visualize(results, metrics[args.viz_metric], args)
+    # Summarize and print metrics
+    metrics = summarize_metrics(metrics, n_timesteps)
+    return results, metrics
 
-def eval_suite(item, truth, model, args):
-    # Run suite of evaluation tasks on provided item
-    model.eval()
-    # Collate item to batch tensor
-    targets, mask, lengths, order = mseq.seq_collate_dict([item])
-    # Send to device
-    mask = mask.to(args.device)
-    for m in targets.keys():
-        targets[m] = targets[m].to(args.device)
-
-    # Process inputs for each evaluation task
-    tasks = ['Recon.', 'Drop Half', 'Fwd. Extra.', 'Bwd. Extra.', 'Cond. Gen']
-    inputs = dict()
-    # For reconstruction provide complete inputs
-    inputs[tasks[0]] = {m: targets[m].clone().detach() for m in targets}
-    # For drop-half, randomly remove 50% of data
-    inputs[tasks[1]] = mseq.rand_delete(targets, 0.5, lengths)
-    # For forward extrapolation, remove last 25% of data
-    inputs[tasks[2]] = mseq.keep_segment(targets, 0.0, 0.75, lengths)
-    # For backward extrapolation, remove first 25% of data
-    inputs[tasks[3]] = mseq.keep_segment(targets, 0.25, 1.0, lengths)
-    # For conditional generation, remove last 75% of y-coordinate
-    inputs[tasks[4]] =\
-        mseq.keep_segment(targets, 0.0, 0.25, lengths, ['spiral-y'])
-    inputs[tasks[4]]['spiral-x'] = targets['spiral-x'].clone().detach()
-
-    # Create figure and axes
-    fig, axes = plt.subplots(1, 5, figsize=(10,2.5),
-                             subplot_kw={'aspect': 'equal'})
+def compute_metrics(model, infer, prior, recon,
+                    targets, mask, lengths, order, args):
+    """Compute evaluation metrics from batch of inputs and outputs."""    
+    metrics = dict()
+    if type(lengths) != torch.tensor:
+        lengths = torch.tensor(lengths).float().to(args.device)
+    # Compute and store KLD and reconstruction losses
+    metrics['kld_loss'] = model.kld_loss(infer, prior, mask)
+    metrics['rec_loss'] = model.rec_loss(targets, recon, mask, args.rec_mults)
+    # Compute mean squared error in 2D space for each time-step
+    mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
+    mse = mse.sum(dim=range(2, mse.dim()))
+    # Average across timesteps, for each sequence
+    def time_avg(val):
+        val[1 - mask.squeeze(-1)] = 0.0
+        return val.sum(dim = 0) / lengths
+    metrics['mse'] = time_avg(mse)[order].tolist()    
+    return metrics
     
-    # Iterate over tasks
-    for i, task in enumerate(tasks):
-        # Run forward pass observed inputs
-        observed = inputs[task]
-        infer, prior, recon = model(observed, lengths=lengths,
-                                    sample=False, **args.eval_args)
-        # Compute KLD and reconstruction losses
-        kld_loss = model.kld_loss(infer, prior, mask)
-        kld_loss /= lengths[0]
-        rec_loss = model.rec_loss(targets, recon, mask, args.rec_mults)
-        rec_loss /= lengths[0]
-        # Compute mean squared error for each timestep
-        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
-        mse = mse.sum(dim=range(2, mse.dim()))
-        # Average across timesteps, for each sequence
-        mse = mse.sum(dim=0).cpu() / torch.tensor(lengths).float()
-        mse = mse.item()
-        # Print losses
-        print('{:15} KLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f}'\
-              .format(task, kld_loss, rec_loss, mse))
-        # Extract quantities for plotting
-        data = (targets['spiral-x'][:,0].cpu().numpy(),
-                targets['spiral-y'][:,0].cpu().numpy())
-        obs = (observed['spiral-x'][:,0].cpu().numpy(),
-               observed['spiral-y'][:,0].cpu().numpy())
-        pred = (recon['spiral-x'][0][:,0].cpu().numpy(),
-                recon['spiral-y'][0][:,0].cpu().numpy())
-        rng = (1.96*recon['spiral-x'][1][:,0].cpu().numpy(),
-               1.96*recon['spiral-y'][1][:,0].cpu().numpy())
-        # Plot spiral
-        plot_spiral(axes[i], truth, data, obs, pred, rng)
-        axes[i].set_title(task)
-        axes[i].set_xticks([], [])
-        axes[i].set_yticks([], [])
-        for spine in axes[i].spines.values():
-            spine.set_visible(False)        
-        axes[i].set_xlabel("MSE: {:0.3f}".format(mse))
-        if i == 0:
-            axes[i].set_ylabel(args.model)
-        
-    # Display and save figure
-    plt.draw()
-    plt.savefig('suite.pdf')
-    plt.show()
+def summarize_metrics(metrics, n_timesteps):
+    """Summarize and print metrics across dataset."""
+    summary = dict()
+    for key, val in metrics.items():
+        if type(val) is list:
+            # Compute mean and std dev. of metric over sequences
+            summary[key] = np.mean(val)
+            summary[key + '_std'] = np.std(val)
+        else:
+            # Average over all timesteps
+            summary[key] = val / n_timesteps
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}\t  MSE: {:6.3f} +-{:2.3f}'\
+          .format(summary['kld_loss'], summary['rec_loss'],
+                  summary['mse'], summary['mse_std']))
+    return summary
 
-def visualize(dataset, observed, predictions, ranges,
-              metric, args, fig_path=None):
+def visualize(results, metric, args):
     """Plots predictions against truth for representative fits."""
-    # Select top 4 and bottom 4
+    reference = results['targets']
+    observed = results['inputs']
+    predicted = results['recon']
+
+    # Select top 4 and bottom 4 predictions
     sel_idx = np.concatenate((np.argsort(metric)[:4],
                               np.argsort(metric)[-4:][::-1]))
     sel_metric = [metric[i] for i in sel_idx]
-    sel_truth = [dataset.orig['metadata'][i][:,0:2] for i in sel_idx]
-    sel_truth = [(arr[:,0], arr[:,1]) for arr in sel_truth]
-    sel_data = [(dataset.orig['spiral-x'][i], dataset.orig['spiral-y'][i])
+    sel_true = [reference['metadata'][i][:,0:2] for i in sel_idx]
+    sel_true = [(arr[:,0], arr[:,1]) for arr in sel_true]
+    sel_data = [(reference['spiral-x'][i], reference['spiral-y'][i])
                 for i in sel_idx]
-    sel_obs = [(observed['spiral-x'][i], observed['spiral-y'][i])
+    sel_obsv = [(observed['spiral-x'][i], observed['spiral-y'][i])
                for i in sel_idx]
-    sel_pred = [(predictions['spiral-x'][i], predictions['spiral-y'][i])
+    sel_pred = [(predicted['spiral-x'][i][:,0], predicted['spiral-y'][i][:,0])
                 for i in sel_idx]
-    sel_rng = [(ranges['spiral-x'][i], ranges['spiral-y'][i])
-               for i in sel_idx]
+    sel_rng = [(predicted['spiral-x'][i][:,1], predicted['spiral-y'][i][:,1])
+                for i in sel_idx]
 
+    # Create figure to visualize predictions
+    if not hasattr(args, 'fig'):
+        args.fig, args.axes =\
+            plt.subplots(4, 2, figsize=(4,8), subplot_kw={'aspect': 'equal'})
+    else:
+        plt.figure(args.fig.number)
+    axes = args.axes
+    
     # Set current figure
     plt.figure(args.fig.number)
     for i in range(len(sel_idx)):
         axis = args.axes[(i % 4),(i // 4)]
         # Plot spiral
-        plot_spiral(axis, sel_truth[i], sel_data[i],
-                    sel_obs[i], sel_pred[i], sel_rng[i])
+        plot_spiral(axis, sel_true[i], sel_data[i],
+                    sel_obsv[i], sel_pred[i], sel_rng[i])
         # Set title as metric
         axis.set_title("Metric = {:0.3f}".format(sel_metric[i]))
         axis.set_xlabel("Spiral {:03d}".format(sel_idx[i]))
         
     plt.tight_layout()
     plt.draw()
-    if fig_path is not None:
+    if args.eval_set is not None:
+        fig_path = os.path.join(args.save_dir, args.eval_set + '.pdf')
         plt.savefig(fig_path)
     plt.pause(1.0 if args.test else 0.001)
 
-def plot_spiral(axis, truth, data, obs, pred, rng):
+def plot_spiral(axis, true, data, obsv, pred, rng):
     axis.cla()
-    # Plot confidence ellipses
-    ec = EllipseCollection(rng[0], rng[1], (0,), units='x',
+    # Plot 95% confidence ellipses
+    ec = EllipseCollection(1.96*rng[0], 1.96*rng[1], (0,), units='x',
                            facecolors=('c',), alpha=0.25,
                            offsets=np.column_stack(pred),
                            transOffset=axis.transData)
     axis.add_collection(ec)
 
     # Plot ground truth
-    axis.plot(truth[0], truth[1], 'b-', linewidth=1.5)
+    axis.plot(true[0], true[1], 'b-', linewidth=1.5)
 
     # Plot observations (blue = both, pink = x-only, yellow = y-only)
-    if (np.isnan(obs[0]) != np.isnan(obs[1])).any():
-        axis.plot(obs[0], data[1], '<', markersize=2, color='#fe46a5')
-        axis.plot(data[0], obs[1], 'v', markersize=2, color='#fec615')
-    axis.plot(obs[0], obs[1], 'bo', markersize=3)
+    if (np.isnan(obsv[0]) != np.isnan(obsv[1])).any():
+        axis.plot(obsv[0], data[1], '<', markersize=2, color='#fe46a5')
+        axis.plot(data[0], obsv[1], 'v', markersize=2, color='#fec615')
+    axis.plot(obsv[0], obsv[1], 'bo', markersize=3)
 
     # Plot predictions
     axis.plot(pred[0], pred[1], '-', linewidth=1.5, color='#04d8b2')
@@ -249,6 +223,9 @@ def plot_spiral(axis, truth, data, obs, pred, rng):
     # Set limits
     axis.set_xlim(-4, 4)
     axis.set_ylim(-4, 4)
+
+def save_results(results, args):
+    pass
     
 def save_params(args, model):
     fname = 'param_hist.tsv'
@@ -347,19 +324,6 @@ def main(args):
     # Create path to save models/predictions
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
-
-    # Run task suite on data sequence, if given
-    if args.suite is not None:
-        # Get data item and corresponding ground truth from dataset
-        suite_idx = args.suite
-        item = test_data[suite_idx]
-        truth = test_data.orig['metadata'][suite_idx][:,0:2]
-        truth = (truth[:,0], truth[:,1])
-        print("Running suite of inference tasks...")
-        print("--")
-        with torch.no_grad():
-            eval_suite(item, truth, model, args)
-        return
         
     # Create figure to visualize predictions
     if args.visualize:
@@ -367,33 +331,25 @@ def main(args):
                                            subplot_kw={'aspect': 'equal'})
         
     # Evaluate model if test flag is set
-    if args.test:
-        # Create paths to save predictions
-        pred_train_dir = os.path.join(args.save_dir, "pred_train")
-        pred_test_dir = os.path.join(args.save_dir, "pred_test")
-        if not os.path.exists(pred_train_dir):
-            os.makedirs(pred_train_dir)
-        if not os.path.exists(pred_test_dir):
-            os.makedirs(pred_test_dir)
-            
+    if args.test:            
         # Evaluate on both training and test set        
         print("--Training--")
         eval_loader = DataLoader(train_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=True)
         with torch.no_grad():
-            pred, _  = evaluate(eval_loader, model, args,
-                                os.path.join(args.save_dir, "train.pdf"))
-            # save_predictions(train_data, pred, pred_train_dir)
+            args.eval_set = 'train'
+            results, _  = evaluate(eval_loader, model, args)
+            save_results(results, args)
             
         print("--Testing--")
         eval_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=True)
         with torch.no_grad():
-            pred, _  = evaluate(eval_loader, model, args,
-                                os.path.join(args.save_dir, "test.pdf"))
-            # save_predictions(test_data, pred, pred_test_dir)
+            args.eval_set = 'test'
+            results, _  = evaluate(eval_loader, model, args)
+            save_results(results, args)
 
         # Save command line flags, model params
         save_params(args, model)
@@ -416,8 +372,8 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                pred, losses = evaluate(test_loader, model, args)
-                _, _, loss = losses
+                _, metrics = evaluate(test_loader, model, args)
+                loss = metrics[args.eval_metric]
             if loss < best_loss:
                 best_loss = loss
                 path = os.path.join(args.save_dir, "best.pth") 
@@ -474,6 +430,16 @@ if __name__ == "__main__":
                         help='fraction of test trajectory to begin at')
     parser.add_argument('--stop_frac', type=float, default=0.75, metavar='F',
                         help='fraction of test trajectory to stop at')
+    parser.add_argument('--drop_mods', type=str, default=[], nargs='+',
+                        help='modalities to delete at test (default: none')
+    parser.add_argument('--keep_mods', type=str, default=[], nargs='+',
+                        help='modalities to retain at test (default: none')
+    parser.add_argument('--eval_mods', type=str, default=None, nargs='+',
+                        help='modalities to evaluate at test (default: none')
+    parser.add_argument('--eval_metric', type=str, default='mse',
+                        help='metric to track best model (default: mse)')
+    parser.add_argument('--viz_metric', type=str, default='mse',
+                        help='metric for visualization (default: mse)')
     parser.add_argument('--log_freq', type=int, default=5, metavar='N',
                         help='print loss N times every epoch (default: 5)')
     parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
@@ -490,8 +456,6 @@ if __name__ == "__main__":
                         help='modalities to normalize (default: [])')
     parser.add_argument('--test', action='store_true', default=False,
                         help='evaluate without training (default: false)')
-    parser.add_argument('--suite', type=int, default=None, metavar='I',
-                        help='runs inference suite on spiral I if set')
     parser.add_argument('--load', type=str, default=None,
                         help='path to trained model (either resume or test)')
     parser.add_argument('--data_dir', type=str, default="./datasets/spirals",
