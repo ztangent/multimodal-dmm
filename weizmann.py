@@ -64,15 +64,14 @@ def train(loader, model, optimizer, epoch, args):
           format(epoch, loss, kld_mult))
     return loss
 
-def evaluate(loader, model, args, fig_path=None):
+def evaluate(loader, model, args):
     model.eval()
     # Set up accumulators
-    data_num = 0
+    n_timesteps = 0
     reference = {m: [] for m in loader.dataset.modalities}
     predicted = {m: [] for m in args.modalities}
     observed = {m: [] for m in args.modalities}
-    kld_loss, rec_loss, mse_loss, ssim_loss = [], [], [], []
-    accuracy = {m: [] for m in ['action', 'person']}
+    metrics = None
     # Only compute reconstruction loss for specified modalities
     rec_mults = dict(args.rec_mults)
     if args.eval_mods is not None:
@@ -94,63 +93,88 @@ def evaluate(loader, model, args, fig_path=None):
         # Run forward pass using all modalities, get MAP estimate
         infer, prior, recon = model(inputs, lengths=lengths, sample=False,
                                     **args.eval_args)
-        # Compute and store KLD and reconstruction losses
-        kld_loss.append(model.kld_loss(infer, prior, mask))
-        rec_loss.append(model.rec_loss(targets, recon, mask, args.rec_mults))
         # Keep track of total number of time-points
-        data_num += sum(lengths)
+        n_timesteps += sum(lengths)
         # Decollate and store observations and predictions
         for m in targets.keys():
             reference[m] += mseq.seq_decoll(targets[m], lengths, order)
         for m in recon.keys():
             observed[m] += mseq.seq_decoll(inputs[m], lengths, order)
             predicted[m] += mseq.seq_decoll(recon[m][0], lengths, order)
-        # Compute video mean squared error and SSIM for each timestep
-        rec_vid, tgt_vid = recon['video'][0], targets['video']
-        mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
-        mse = mse.sum(dim=range(2, mse.dim()))
-        ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
-        ssim = ssim.view(max(lengths), len(lengths))
-        # Average across timesteps, for each sequence
-        lens = torch.tensor(lengths).float().to(args.device)
-        mse[1 - mask.squeeze(-1)] = 0.0
-        mse = mse.sum(dim=0) / lens
-        mse_loss += mse[order].tolist()
-        ssim[1 - mask.squeeze(-1)] = 0.0
-        ssim = ssim.sum(dim=0) / lens
-        ssim_loss += ssim[order].tolist()
-        # Compute prediction accuracy for action and person labels
-        for m in ['action', 'person']:
-            rec, tgt = recon[m][0], targets[m]
-            correct = (rec.argmax(dim=-1) == tgt.squeeze(-1).long())
-            acc = correct.sum(dim=0).float() / lens
-            accuracy[m] += acc[order].tolist()
+        # Compute and accumulate metrics for this batch
+        b_metrics = compute_metrics(model, infer, prior, recon,
+                                    targets, mask, lengths, order, args)
+        metrics = (b_metrics if metrics is None else
+                   {k: metrics[k] + b_metrics[k] for k in metrics})
     # Plot predictions against truth
     if args.visualize:
-         visualize(reference, observed, predicted, ssim_loss, args, fig_path)
-    # Average losses and print
-    kld_loss = sum(kld_loss) / data_num
-    rec_loss = sum(rec_loss) / data_num
-    mse_std = np.std(mse_loss)
-    mse_loss = sum(mse_loss) / len(mse_loss)
-    ssim_std = np.std(ssim_loss)
-    ssim_loss = sum(ssim_loss) / len(ssim_loss)
-    action_std = np.std(accuracy['action'])
-    action_acc = sum(accuracy['action']) / len(accuracy['action'])
-    person_std = np.std(accuracy['person'])
-    person_acc = sum(accuracy['person']) / len(accuracy['person'])
-    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
-          format(kld_loss, rec_loss))
-    print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
-          format(mse_loss, mse_std, ssim_loss, ssim_std))
-    print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
-          format(action_acc, action_std, person_acc, person_std))
+         visualize(reference, observed, predicted, metrics['ssim'], args)
+    # Summarize and print metrics
+    metrics = summarize_metrics(metrics, n_timesteps)
     results = reference, observed, predicted
-    losses = kld_loss, rec_loss, mse_loss, ssim_loss
-    return results, losses
+    return results, metrics
 
-def visualize(reference, observed, predicted,
-              metric, args, fig_path=None):
+def compute_metrics(model, infer, prior, recon,
+                    targets, mask, lengths, order, args):
+    """Compute evaluation metrics from batch of inputs and outputs."""    
+    metrics = dict()
+    t_max, b_dim = max(lengths), len(lengths)
+    if type(lengths) != torch.tensor:
+        lengths = torch.tensor(lengths).float().to(args.device)
+
+    # Compute and store KLD and reconstruction losses
+    metrics['kld_loss'] = model.kld_loss(infer, prior, mask)
+    metrics['rec_loss'] = model.rec_loss(targets, recon, mask, args.rec_mults)
+        
+    # Compute video mean squared error and SSIM for each timestep
+    rec_vid, tgt_vid = recon['video'][0], targets['video']
+    mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
+    mse = mse.sum(dim=range(2, mse.dim()))
+    ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
+    ssim = ssim.view(t_max, b_dim)
+
+    # Average across timesteps, for each sequence
+    def time_avg(val):
+        val[1 - mask.squeeze(-1)] = 0.0
+        return val.sum(dim = 0) / lengths
+    metrics['mse'] = time_avg(mse)[order].tolist()
+    metrics['ssim'] = time_avg(ssim)[order].tolist()
+    
+    # Compute prediction accuracy over time for action and person labels
+    def time_acc(probs, targets):
+        correct = (probs.argmax(dim=-1) == targets.squeeze(-1).long())
+        return correct.sum(dim=0).float() / lengths
+    for m in ['action', 'person']:
+        if m not in recon:
+            metrics[m] = [0] * b_dim
+            continue
+        metrics[m] = time_acc(recon[m][0], targets[m])
+        metrics[m] = metrics[m][order].tolist()
+
+    return metrics
+    
+def summarize_metrics(metrics, n_timesteps):
+    """Summarize and print metrics across dataset."""
+    summary = dict()
+    for key, val in metrics.items():
+        if type(val) is list:
+            # Compute mean and std dev. of metric over sequences
+            summary[key] = np.mean(val)
+            summary[key + '_std'] = np.std(val)
+        else:
+            # Average over all timesteps
+            summary[key] = val / n_timesteps
+    print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
+          format(summary['kld_loss'], summary['rec_loss']))
+    print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
+          format(summary['mse'], summary['mse_std'],
+                 summary['ssim'], summary['ssim_std']))
+    print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
+          format(summary['action'], summary['action_std'],
+                 summary['person'], summary['person_std']))
+    return summary
+
+def visualize(reference, observed, predicted, metric, args):
     """Plots predictions against truth for representative fits."""
     # Select best and worst predictions
     sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
@@ -243,8 +267,8 @@ def visualize(reference, observed, predicted,
         
     plt.tight_layout()
     plt.draw()
-    if fig_path is not None:
-        plt.savefig(fig_path)
+    if args.fig_path is not None:
+        plt.savefig(args.fig_path)
     plt.pause(1.0 if args.test else 0.001)
     
 def save_results(results, args):
@@ -451,23 +475,15 @@ def main(args):
         
     # Evaluate model if test flag is set
     if args.test:
-        # Create paths to save predictions
-        pred_train_dir = os.path.join(args.save_dir, "pred_train")
-        pred_test_dir = os.path.join(args.save_dir, "pred_test")
-        if not os.path.exists(pred_train_dir):
-            os.makedirs(pred_train_dir)
-        if not os.path.exists(pred_test_dir):
-            os.makedirs(pred_test_dir)
-
         # Evaluate on both training and test set        
         print("--Training--")
         eval_loader = DataLoader(train_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            results, _  = evaluate(eval_loader, model, args,
-                                   os.path.join(args.save_dir, "train.pdf"))
+            args.fig_path = os.path.join(args.save_dir, 'train.pdf')
             args.save_args['filename'] = 'train.avi'
+            results, _  = evaluate(eval_loader, model, args)
             save_results(results, args)
             
         print("--Testing--")
@@ -475,9 +491,9 @@ def main(args):
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=False)
         with torch.no_grad():
-            results, _  = evaluate(eval_loader, model, args,
-                                   os.path.join(args.save_dir, "test.pdf"))
+            args.fig_path = os.path.join(args.save_dir, 'test.pdf')
             args.save_args['filename'] = 'test.avi'
+            results, _  = evaluate(eval_loader, model, args)
             save_results(results, args)
 
         # Save command line flags, model params
@@ -494,6 +510,9 @@ def main(args):
     test_loader = DataLoader(test_data, batch_size=args.batch_size,
                              collate_fn=mseq.seq_collate_dict,
                              shuffle=False, pin_memory=True)
+
+    # Set figure path to None
+    args.fig_path = None
     
     # Train and save best model
     best_loss = float('inf')
@@ -502,12 +521,11 @@ def main(args):
         train(train_loader, model, optimizer, epoch, args)
         if epoch % args.eval_freq == 0:
             with torch.no_grad():
-                ref, pred, losses = evaluate(test_loader, model, args)
-                # Select best epoch via reconstruction loss
-                _, loss, _, _ = losses
+                results, metrics = evaluate(test_loader, model, args)
+                loss = metrics['rec_loss'] # Save best reconstruction loss
             if loss < best_loss:
                 best_loss = loss
-                path = os.path.join(args.save_dir, "best.pth") 
+                path = os.path.join(args.save_dir, "best.pth")
                 save_checkpoint(args.modalities, model, path)
         # Save checkpoints
         if epoch % args.save_freq == 0:
