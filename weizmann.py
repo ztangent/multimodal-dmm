@@ -346,17 +346,19 @@ def save_results(results, args):
                 # Add text labels
                 r_idx = reference['action'][i][t]
                 o_idx = observed['action'][i][t]
-                text = weizmann.actions[int(r_idx)]
-                add_label(r_frame, text, (2, 10))
+                r_text = weizmann.actions[int(r_idx)]
+                add_label(r_frame, r_text, (2, 10))
                 if o_idx == o_idx: #NaN check
-                    add_label(o_frame, text, (2, 10))
+                    o_text = weizmann.actions[int(o_idx)]
+                    add_label(o_frame, o_text, (2, 10))
                 
                 r_idx = reference['person'][i][t]
                 o_idx = observed['person'][i][t]
-                text = weizmann.persons[int(r_idx)]
-                add_label(r_frame, text, (2, 60))
+                r_text = weizmann.persons[int(r_idx)]
+                add_label(r_frame, r_text, (2, 60))
                 if o_idx == o_idx: #NaN check
-                    add_label(o_frame, text, (2, 60))
+                    o_text = weizmann.persons[int(o_idx)]
+                    add_label(o_frame, o_text, (2, 60))
             frame = np.hstack([r_frame, o_frame, p_frame])
             vwriter.write(frame)
                     
