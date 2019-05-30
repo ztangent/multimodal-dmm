@@ -406,6 +406,25 @@ def load_data(modalities, args):
         train_data.normalize_(modalities=args.normalize)
     return train_data, test_data
 
+def build_model(constructor, args):
+    dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
+    dists = {'video': 'Bernoulli',
+             'person': 'Categorical',
+             'action': 'Categorical'}
+    gauss_out = (args.model != 'MultiDKS')
+    z_dim = args.model_args.get('z_dim', 256)
+    h_dim = args.model_args.get('h_dim', 256)
+    image_encoder = models.common.ImageEncoder(z_dim, gauss_out)
+    image_decoder = models.common.ImageDecoder(z_dim)
+    model = constructor(args.modalities,
+                        dims=[dims[m] for m in args.modalities],
+                        dists=[dists[m] for m in args.modalities],
+                        encoders={'video': image_encoder},
+                        decoders={'video': image_decoder},
+                        z_dim=z_dim, h_dim=h_dim,
+                        device=args.device, **args.model_args)
+    return model
+    
 def main(args):
     # Fix random seed
     torch.manual_seed(args.seed)
@@ -439,29 +458,17 @@ def main(args):
     args.model = models.names.get(args.model, args.model)
 
     # Construct model
-    dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
-    dists = {'video': 'Bernoulli',
-             'person': 'Categorical',
-             'action': 'Categorical'}
     if hasattr(models, args.model):
         print('Constructing model...')
         constructor = getattr(models, args.model)
-        gauss_out = (args.model != 'MultiDKS')
-        image_encoder = models.common.ImageEncoder(256, gauss_out)
-        image_decoder = models.common.ImageDecoder(256)
-        model = constructor(args.modalities,
-                            dims=[dims[m] for m in args.modalities],
-                            dists=[dists[m] for m in args.modalities],
-                            encoders={'video': image_encoder},
-                            decoders={'video': image_decoder},
-                            z_dim=256, h_dim=256,
-                            device=args.device, **args.model_args)
+        model = build_model(constructor, args)
         n_params = sum(p.numel() for p in model.parameters()
                        if p.requires_grad)
         print('Number of parameters:', n_params)
     else:
         print('Model name not recognized.')
         return
+    # Load model state from checkpoint
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'])
 

@@ -263,6 +263,14 @@ def load_data(modalities, args):
         train_data.normalize_(modalities=args.normalize)
     return train_data, test_data
 
+def build_model(constructor, args):
+    dims = {'spiral-x': 1, 'spiral-y': 1}
+    model = constructor(args.modalities,
+                        dims=(dims[m] for m in args.modalities),
+                        z_dim=5, h_dim=20,
+                        device=args.device, **args.model_args)
+    return model
+
 def main(args):
     # Fix random seed
     torch.manual_seed(args.seed)
@@ -296,26 +304,23 @@ def main(args):
     args.model = models.names.get(args.model, args.model)
 
     # Construct model
-    dims = {'spiral-x': 1, 'spiral-y': 1}
     if hasattr(models, args.model):
         print('Constructing model...')
         constructor = getattr(models, args.model)
-        model = constructor(args.modalities,
-                            dims=(dims[m] for m in args.modalities),
-                            z_dim=5, h_dim=20,
-                            device=args.device, **args.model_args)
+        model = build_model(constructor, args)
         n_params = sum(p.numel() for p in model.parameters()
                        if p.requires_grad)
         print('Number of parameters:', n_params)
     else:
         print('Model name not recognized.')
         return
+    # Load model state from checkpoint
     if checkpoint is not None:
         model.load_state_dict(checkpoint['model'])
 
     # Default reconstruction loss multipliers
     if args.rec_mults is None:
-        args.rec_mults = {m : (1.0 / dims[m]) / len(args.modalities)
+        args.rec_mults = {m : (1.0 / model.dims[m]) / len(args.modalities)
                           for m in args.modalities}
         
     # Setup loss and optimizer
