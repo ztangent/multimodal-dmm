@@ -315,7 +315,7 @@ class MultiDMM(MultiDGTS):
         return z_mean, z_std
 
     def z_filter(self, z_mean, z_std, z_masks, direction='fwd',
-                 sample=True, n_particles=1):
+                 sample=True, n_particles=1, sample_init=False):
         """Performs filtering on the latent variables by combining
         the prior distributions with inferred distributions
         at each time step using a product of Gaussian experts.
@@ -335,6 +335,8 @@ class MultiDMM(MultiDGTS):
             sample at each timestep if true, use the mean otherwise
         n_particles : int
             number of filtering particles, overrides sample flag if > 1
+        sample_init : bool
+            whether to sample for initial time-step
 
         Returns
         -------
@@ -391,7 +393,7 @@ class MultiDMM(MultiDGTS):
             infer_std.append(infer_std_t)
 
             # Sample particles from inferred distribution
-            if sample or n_particles > 1:
+            if sample or n_particles > 1 or (len(samples)==0 and sample_init):
                 z_t = self._sample_gauss(
                     infer_mean_t.expand(n_particles, -1, -1),
                     infer_std_t.expand(n_particles, -1, -1))
@@ -427,6 +429,8 @@ class MultiDMM(MultiDGTS):
            whether to filter or smooth, and in which directions
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
+        sample_init: bool
+           whether to sample from z_0 or use mean (default)
         flt_particles : int
            number of filtering particles (default : 1)
         smt_particles : int
@@ -444,6 +448,7 @@ class MultiDMM(MultiDGTS):
         lengths = kwargs.get('lengths')
         mode = kwargs.get('mode', 'fsmooth')
         sample = kwargs.get('sample', True)
+        sample_init = kwargs.get('sample_init', False)
         flt_particles = kwargs.get('flt_particles', 1)
         smt_particles = kwargs.get('smt_particles', 1)
         t_max, b_dim = max(lengths), len(lengths)
@@ -456,9 +461,11 @@ class MultiDMM(MultiDGTS):
         
         # Filtering pass
         direction = 'fwd' if mode in ['ffilter', 'bsmooth'] else 'bwd'
+        flt_init = sample_init if mode in ['ffilter', 'bfilter'] else False
         infer, prior, z_samples = \
             self.z_filter(obs_mean, obs_std, obs_mask, direction=direction,
-                          sample=sample, n_particles=flt_particles)
+                          sample=sample, n_particles=flt_particles,
+                          sample_init=flt_init)
 
         # Smoothing pass
         if mode in ['fsmooth', 'bsmooth']:
@@ -476,7 +483,8 @@ class MultiDMM(MultiDGTS):
                               cons(obs_std, (flt_std, inv_std)),
                               cons(obs_mask, (flt_mask, inv_mask)),
                               direction=direction,
-                              sample=sample, n_particles=smt_particles)
+                              sample=sample, n_particles=smt_particles,
+                              sample_init=sample_init)
 
         # Decode sampled z to reconstruct inputs
         recon = self.decode(z_samples)

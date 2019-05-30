@@ -93,8 +93,9 @@ def evaluate(loader, model, args):
         for m in args.keep_mods:
             inputs[m] = targets[m].clone().detach()
         # Run forward pass using all modalities, get MAP estimate
-        infer, prior, recon = model(inputs, lengths=lengths, sample=False,
-                                    **args.eval_args)
+        eval_args = {'sample': False}
+        eval_args.update(args.eval_args)
+        infer, prior, recon = model(inputs, lengths=lengths, **args.eval_args)
         # Keep track of total number of time-points
         n_timesteps += sum(lengths)
         # Compute and accumulate metrics for this batch

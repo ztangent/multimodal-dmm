@@ -164,6 +164,8 @@ class MultiDKS(MultiDGTS):
            lengths of all input sequences in the batch
         sample: bool
            whether to sample from z_t (default) or return MAP estimate
+        sample_init: bool
+           whether to sample from z_0 or use mean (default)
 
         Returns
         -------
@@ -175,6 +177,7 @@ class MultiDKS(MultiDGTS):
            tuple of reconstructed distribution parameters for each modality
         """
         lengths, sample = kwargs.get('lengths'), kwargs.get('sample', True)
+        sample_init = kwargs.get('sample_init', False)
         b_dim, t_max = len(lengths), max(lengths)
 
         # Initialize list accumulators
@@ -267,7 +270,7 @@ class MultiDKS(MultiDGTS):
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
             
-            if sample:
+            if sample or (sample_init and t == 0):
                 # Sample z from p(z_t|z_{t-1}, x_{1:T})
                 z_t = self._sample_gauss(infer_mean_t, infer_std_t)
             else:
