@@ -511,6 +511,18 @@ def main(args):
         save_params(args, model)
         return
 
+    # Corrupt training data if flags are specified
+    if 'uniform' in args.corrupt:
+        # Uniform random deletion
+        train_data = train_data.corrupt(args.corrupt['uniform'])
+    if 'burst' in args.corrupt:
+        # Burst deletion
+        train_data = train_data.corrupt(args.corrupt['burst'], mode='burst')
+    if 'semi' in args.corrupt:
+        # Delete entire modalities at random
+        train_data = train_data.corrupt(args.corrupt['semi'], mode='all_none',
+                                        modalities=args.corrupt['modalities'])
+    
     # Split training data into chunks
     if args.split is not None:
         train_data = train_data.split(args.split, n_is_len=True)
@@ -616,6 +628,8 @@ if __name__ == "__main__":
                         help='flag to plot gradients (default: false)')
     parser.add_argument('--normalize', type=str, default=[], nargs='+',
                         help='modalities to normalize (default: [])')
+    parser.add_argument('--corrupt', type=yaml.safe_load, default=dict(),
+                        help='options to corrupt training data')
     parser.add_argument('--test', action='store_true', default=False,
                         help='evaluate without training (default: false)')
     parser.add_argument('--load', type=str, default=None,

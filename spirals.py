@@ -21,7 +21,7 @@ from datasets import multiseq as mseq
 from datasets.spirals import SpiralsDataset
 
 import models
-from utils import eval_ccc, anneal, plot_grad_flow
+from utils import anneal, plot_grad_flow
 
 def train(loader, model, optimizer, epoch, args):
     model.train()
@@ -361,6 +361,18 @@ def main(args):
         save_params(args, model)
         return
 
+    # Corrupt training data if flags are specified
+    if 'uniform' in args.corrupt:
+        # Uniform random deletion
+        train_data = train_data.corrupt(args.corrupt['uniform'])
+    if 'burst' in args.corrupt:
+        # Burst deletion
+        train_data = train_data.corrupt(args.corrupt['burst'], mode='burst')
+    if 'semi' in args.corrupt:
+        # Delete entire modalities at random
+        train_data = train_data.corrupt(args.corrupt['semi'], mode='all_none',
+                                        modalities=args.corrupt['modalities'])
+    
     # Split training data into chunks
     train_data = train_data.split(args.split)
     # Batch data using data loaders
@@ -373,6 +385,7 @@ def main(args):
    
     # Train and save best model
     best_loss = float('inf')
+    args.eval_set = None
     for epoch in range(1, args.epochs + 1):
         print('---')
         train(train_loader, model, optimizer, epoch, args)
@@ -460,6 +473,8 @@ if __name__ == "__main__":
                         help='flag to plot gradients (default: false)')
     parser.add_argument('--normalize', type=str, default=[], nargs='+',
                         help='modalities to normalize (default: [])')
+    parser.add_argument('--corrupt', type=yaml.safe_load, default=dict(),
+                        help='options to corrupt training data')
     parser.add_argument('--test', action='store_true', default=False,
                         help='evaluate without training (default: false)')
     parser.add_argument('--load', type=str, default=None,

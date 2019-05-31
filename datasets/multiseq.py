@@ -233,6 +233,39 @@ class MultiseqDataset(Dataset):
         dataset.split_(n, n_is_len)
         return dataset
 
+    def corrupt_(self, del_frac, mode='uniform', modalities=None):
+        """Corrupt dataset by randomly deleting data (in place).
+
+        del_frac -- fraction of data to delete per sequence
+        mode -- either 'uniform' random deletion or 'burst' deletion
+        modalities -- which modalities to corrupt (default: all)
+        """
+        if modalities == None:
+            modalities = self.modalities
+
+        if mode == 'uniform':
+            def del_func(length):
+                return np.random.choice(length, int(del_frac * length), False)
+        elif mode == 'burst':
+            def del_func(length):
+                t_start = np.random.randint(length)
+                t_stop = min(t_start + int(del_frac * length), length)
+                return range(t_start, t_stop)
+        elif mode == 'all_none':
+            def del_func(length):
+                return [] if (np.random.random() > del_frac) else range(length)
+            
+        for m in modalities:
+            for i in range(len(self.data[m])):
+                del_idx = del_func(len(self.data[m][i]))
+                self.data[m][i][del_idx] = float('nan')        
+
+    def corrupt(self, del_frac, mode='uniform', modalities=None):
+        """Corrupt dataset by randomly deleting data (return new dataset)."""
+        dataset = copy.deepcopy(self)
+        dataset.corrupt_(del_frac, mode, modalities)
+        return dataset
+                
     def select(self, seq_ids, invert=False):
         """Select sequences by identifiers and return new dataset.
 
