@@ -77,7 +77,7 @@ class MultiDMM(MultiDGTS):
                 self.enc[m] = nn.Sequential(
                     nn.Embedding(np.prod(self.dims[m]), h_dim),
                     nn.ReLU(),
-                    common.GaussianMLP(h_dim, z_dim, h_dim))                
+                    common.GaussianMLP(h_dim, z_dim, h_dim))
             else:
                 self.enc[m] = common.GaussianMLP(
                     np.prod(self.dims[m]), z_dim, h_dim)

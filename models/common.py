@@ -23,8 +23,9 @@ class CategoricalMLP(nn.Module):
 
 class GaussianMLP(nn.Module):
     """MLP from input to Gaussian output parameters."""
-    def __init__(self, in_dim, out_dim, h_dim):
+    def __init__(self, in_dim, out_dim, h_dim, min_std=1e-6):
         super(GaussianMLP, self).__init__()
+        self.min_std = 1e-6
         self.in_to_h = nn.Sequential(
             nn.Linear(in_dim, h_dim),
             nn.ReLU())
@@ -35,7 +36,7 @@ class GaussianMLP(nn.Module):
 
     def forward(self, x):
         h = self.in_to_h(x)
-        mean, std = self.h_to_mean(h), self.h_to_std(h)
+        mean, std = self.h_to_mean(h), (self.h_to_std(h) + self.min_std)
         return mean, std
 
 class GaussianGTF(nn.Module):

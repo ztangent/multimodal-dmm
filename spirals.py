@@ -281,6 +281,10 @@ def main(args):
     torch.cuda.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    # Check for gradient anomalies
+    if args.anomaly_check:
+        torch.autograd.set_detect_anomaly(True)
+    
     # Convert device string to torch.device
     args.device = (torch.device(args.device) if torch.cuda.is_available()
                    else torch.device('cpu'))
@@ -473,6 +477,8 @@ if __name__ == "__main__":
                         help='save every N epochs (default: 10)')
     parser.add_argument('--device', type=str, default='cuda:0',
                         help='device to use (default: cuda:0 if available)')
+    parser.add_argument('--anomaly_check', action='store_true', default=False,
+                        help='check for gradient anomalies (default: false)')
     parser.add_argument('--visualize', action='store_true', default=False,
                         help='flag to visualize predictions (default: false)')
     parser.add_argument('--gradients', action='store_true', default=False,
