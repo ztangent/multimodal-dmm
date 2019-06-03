@@ -51,6 +51,9 @@ def train(loader, model, optimizer, epoch, args):
         # Plot gradients
         if args.gradients:
             plot_grad_flow(model.named_parameters())
+        # Gradient clipping
+        if args.clip_grad > 0:
+            clip_grad_norm_(model.parameters(), args.clip_grad)
         # Step, then zero gradients
         optimizer.step()
         optimizer.zero_grad()
@@ -586,6 +589,8 @@ if __name__ == "__main__":
                         help='learning rate (default: 5e-4)')
     parser.add_argument('--w_decay', type=float, default=0, metavar='F',
                         help='Adam weight decay (default: 0)')
+    parser.add_argument('--clip_grad', type=float, default=None, metavar='F',
+                        help='clip gradients to this norm (default: None)')
     parser.add_argument('--base_rate', type=float, default=None, metavar='R',
                         help='sampling rate to resample to')
     parser.add_argument('--seed', type=int, default=1, metavar='N',

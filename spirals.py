@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.nn.utils import clip_grad_norm_
 
 from datasets import multiseq as mseq
 from datasets.spirals import SpiralsDataset
@@ -50,6 +51,9 @@ def train(loader, model, optimizer, epoch, args):
         # Plot gradients
         if args.gradients:
             plot_grad_flow(model.named_parameters())
+        # Gradient clipping
+        if args.clip_grad > 0:
+            clip_grad_norm_(model.parameters(), args.clip_grad)
         # Step, then zero gradients
         optimizer.step()
         optimizer.zero_grad()
@@ -433,6 +437,8 @@ if __name__ == "__main__":
                         help='learning rate (default: 1e-4)')
     parser.add_argument('--w_decay', type=float, default=1e-4, metavar='F',
                         help='Adam weight decay (default: 1e-4)')
+    parser.add_argument('--clip_grad', type=float, default=None, metavar='F',
+                        help='clip gradients to this norm (default: None)')
     parser.add_argument('--seed', type=int, default=1, metavar='N',
                         help='random seed (default: 1)')
     parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
