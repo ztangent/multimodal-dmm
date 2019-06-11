@@ -370,6 +370,38 @@ def main(args):
         # Save command line flags, model params
         save_params(args, model)
         return
+
+    # Find best trained model in save directory
+    if args.find_best:
+        test_loader = DataLoader(test_data, batch_size=args.batch_size,
+                                 collate_fn=mseq.seq_collate_dict,
+                                 shuffle=False, pin_memory=True)
+        best_loss, best_model, best_epoch = float('inf'), None, -1
+        args.eval_set = None
+
+        # Iterate over saved models
+        for epoch in range(args.save_freq, args.epochs + 1, args.save_freq):
+            path = os.path.join(args.save_dir, "epoch_{}.pth".format(epoch))
+            model.load_state_dict(load_checkpoint(path, args.device)['model'])
+            print('--- Epoch {} ---'.format(epoch))
+            with torch.no_grad():
+                _, metrics = evaluate(test_loader, model, args)
+                loss = metrics[args.eval_metric]
+            if loss < best_loss:
+                best_loss, best_model, best_epoch = loss, model, epoch
+                path = os.path.join(args.save_dir, "best.pth")
+                save_checkpoint(args.modalities, model, path)
+
+        # Print results for best model
+        print('=== Best Epoch : {} ==='.format(best_epoch))
+        path = os.path.join(args.save_dir, "best.pth".format(epoch))
+        model.load_state_dict(load_checkpoint(path, args.device)['model'])
+        with torch.no_grad():
+            evaluate(test_loader, model, args)
+
+        # Save command line flags, model params
+        save_params(args, model)
+        return
     
     # Corrupt training data if flags are specified
     if 'uniform' in args.corrupt:
@@ -493,6 +525,8 @@ if __name__ == "__main__":
                         help='evaluate without training (default: false)')
     parser.add_argument('--load', type=str, default=None,
                         help='path to trained model (either resume or test)')
+    parser.add_argument('--find_best', action='store_true', default=False,
+                        help='find best model in save directory')
     parser.add_argument('--data_dir', type=str, default="./datasets/spirals",
                         help='path to data base directory')
     parser.add_argument('--save_dir', type=str, default="./spirals_save",
