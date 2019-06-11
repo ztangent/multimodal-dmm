@@ -328,7 +328,9 @@ def main(args):
 
     # Default reconstruction loss multipliers
     if args.rec_mults is None:
-        args.rec_mults = {m : (1.0 / model.dims[m]) / len(args.modalities)
+        corrupt_mult = 1 / (1 - args.corrupt.get('uniform', 0.0))
+        args.rec_mults = {m : ((1.0 / model.dims[m]) / len(args.modalities)
+                               * corrupt_mult)
                           for m in args.modalities}
         
     # Setup loss and optimizer
@@ -368,7 +370,7 @@ def main(args):
         # Save command line flags, model params
         save_params(args, model)
         return
-
+    
     # Corrupt training data if flags are specified
     if 'uniform' in args.corrupt:
         # Uniform random deletion

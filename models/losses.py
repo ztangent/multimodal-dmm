@@ -81,8 +81,8 @@ def nll_gauss(mean, std, x, mask=None):
         mask = (1 - torch.isnan(x)) * mask.view(*shape)
     x = x.clone().detach()
     x[torch.isnan(x)] = 0.0
-    nll_element = ( ((x-mean).pow(2)) / (2 * std.pow(2)) + std.log() +
-                    math.log(math.sqrt(2 * math.pi)) )
+    nll_element = ( 0.5 * ((x-mean) / std).pow(2) + std.log() +
+                    0.5 * math.log(2 * math.pi) )
     nll_element = nll_element.masked_select(mask)
     nll = torch.sum(nll_element)
     return nll

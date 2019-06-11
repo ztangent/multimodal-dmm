@@ -23,9 +23,9 @@ class CategoricalMLP(nn.Module):
 
 class GaussianMLP(nn.Module):
     """MLP from input to Gaussian output parameters."""
-    def __init__(self, in_dim, out_dim, h_dim, min_std=1e-6):
+    def __init__(self, in_dim, out_dim, h_dim, min_std=1e-3):
         super(GaussianMLP, self).__init__()
-        self.min_std = 1e-6
+        self.min_std = min_std
         self.in_to_h = nn.Sequential(
             nn.Linear(in_dim, h_dim),
             nn.ReLU())
