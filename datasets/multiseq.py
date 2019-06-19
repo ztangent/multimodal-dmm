@@ -100,6 +100,8 @@ class MultiseqDataset(Dataset):
                 elif re.match("^.*\.tsv", fp):
                     d = pd.read_csv(fp, sep='\t')
                     d = np.array(preprocess[m](d))
+                # Convert to float to allow NaNs for missing values
+                d = d.astype(float)
                 # Store original data before resampling
                 self.orig[m].append(d)
                 # Subsample/oversample data to base rate
@@ -143,8 +145,10 @@ class MultiseqDataset(Dataset):
                 # Repeat ID field for the length of the whole sequence
                 d = self.seq_id_sets[k].index(seq_id[k])
                 d = np.array([[d]] * seq_len)
-                self.data[m].append(d)
                 self.orig[m].append(d)
+                # Convert to float to allow NaNs for missing values
+                d = d.astype(float)
+                self.data[m].append(d)
             
     def __len__(self):
         return len(self.seq_ids)
