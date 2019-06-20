@@ -30,6 +30,7 @@ def train(loader, model, optimizer, epoch, args):
     data_num = 0
     log_freq = len(loader) // args.log_freq
     rec_mults = dict(args.rec_mults)
+    # Iterate over batches
     for b_num, (targets, mask, lengths, _) in enumerate(loader):
         # Anneal KLD loss multipliers
         b_tot = b_num + epoch*len(loader)
