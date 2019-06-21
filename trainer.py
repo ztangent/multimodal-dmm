@@ -23,6 +23,122 @@ from utils import anneal, plot_grad_flow
 class Trainer(object):
     """Abstract base class for training on multimodal sequential data."""
 
+    # Define parser for all configuration arguments
+    parser = argparse.ArgumentParser(formatter_class=
+                                     argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--modalities', type=str, nargs='+', default=[],
+                        metavar='M', help='data modalities')
+    parser.add_argument('--model', type=str, default='dmm', metavar='S',
+                        help='name of model to train')
+
+    # Additional model-specific arguments as YAML dicts
+    parser.add_argument('--model_args', type=yaml.safe_load,
+                        default={}, metavar='DICT',
+                        help='additional model arguments as yaml dict')
+    parser.add_argument('--train_args', type=yaml.safe_load,
+                        default={}, metavar='DICT',
+                        help='additional train arguments as yaml dict')
+    parser.add_argument('--eval_args', type=yaml.safe_load,
+                        default={}, metavar='DICT',
+                        help='additional eval. arguments as yaml dict')
+    parser.add_argument('--save_args', type=yaml.safe_load,
+                        default={}, metavar='DICT',
+                        help='results saving arguments as yaml dict')
+
+    # Batch, epoch and gradient arguments
+    parser.add_argument('--batch_size', type=int, default=100, metavar='N',
+                        help='input batch size for training')
+    parser.add_argument('--split', type=int, default=1, metavar='N',
+                        help='split each training sequence into N chunks')
+    parser.add_argument('--bylen', action='store_true', default=False,
+                        help='whether to split by length')
+    parser.add_argument('--epochs', type=int, default=100, metavar='N',
+                        help='number of epochs to train')
+    parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
+                        help='learning rate')
+    parser.add_argument('--w_decay', type=float, default=1e-4, metavar='F',
+                        help='Adam weight decay')
+    parser.add_argument('--clip_grad', type=float, default=None, metavar='F',
+                        help='clip gradients to this norm')
+    parser.add_argument('--seed', type=int, default=1, metavar='N',
+                        help='random seed')
+
+    # Loss multipliers and annealing rates
+    parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
+                        help='max kld loss multiplier')
+    parser.add_argument('--rec_mults', type=yaml.safe_load,
+                        default='auto', metavar='DICT',
+                        help='reconstruction loss multiplier')
+    parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
+                        help='epochs to increase kld_mult over')
+
+    # Data normalization and corruption (i.e. random deletion)
+    parser.add_argument('--normalize', type=str, default=[],
+                        nargs='+', metavar='M',
+                        help='modalities to normalize')
+    parser.add_argument('--corrupt', type=yaml.safe_load,
+                        default={}, metavar='DICT',
+                        help='options to corrupt training data')
+
+    # Arguments for data modification / augmentation during training
+    parser.add_argument('--burst_frac', type=float, default=0.1, metavar='F',
+                        help='burst error rate during training')
+
+    # Arguments for data modification / augmentation during evaluation
+    parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
+                        help='fraction of data to randomly drop at test time')
+    parser.add_argument('--start_frac', type=float, default=0.25, metavar='F',
+                        help='fraction of test trajectory to begin at')
+    parser.add_argument('--stop_frac', type=float, default=0.75, metavar='F',
+                        help='fraction of test trajectory to stop at')
+
+    # Arguments for dropping / keeping modalities during evaluation
+    parser.add_argument('--drop_mods', type=str, default=[],
+                        nargs='+', metavar='M',
+                        help='modalities to delete at test')
+    parser.add_argument('--keep_mods', type=str, default=[],
+                        nargs='+', metavar='M',
+                        help='modalities to retain at test')
+    parser.add_argument('--eval_mods', type=str, default='all',
+                        nargs='+', metavar='M',
+                        help='modalities to evaluate at test')
+
+    # Metrics for evaluation and visualization
+    parser.add_argument('--eval_metric', type=str, default='mse', metavar='S',
+                        help='metric to track best model')
+    parser.add_argument('--viz_metric', type=str, default='mse', metavar='S',
+                        help='metric for visualization')
+
+    # Evaluation and save frequencies
+    parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
+                        help='evaluate every N epochs')
+    parser.add_argument('--save_freq', type=int, default=10, metavar='N',
+                        help='save every N epochs')
+
+    # Paths to models and data
+    parser.add_argument('--load', type=str, default=None, metavar='PATH',
+                        help='path to trained model (to test or resume)')
+    parser.add_argument('--data_dir', type=str, metavar='DIR',
+                        help='path to data base directory')
+    parser.add_argument('--save_dir', type=str, metavar='DIR',
+                        help='path to save models and predictions')
+
+    # Flags to plot visualizations and gradients
+    parser.add_argument('--visualize', action='store_true', default=False,
+                        help='flag to visualize predictions')
+    parser.add_argument('--gradients', action='store_true', default=False,
+                        help='flag to plot gradients')
+
+    # Run-time flags
+    parser.add_argument('--device', type=str, default='cuda:0',
+                        help='device to use')
+    parser.add_argument('--anomaly_check', action='store_true', default=False,
+                        help='check for gradient anomalies')    
+    parser.add_argument('--test', action='store_true', default=False,
+                        help='evaluate without training')
+    parser.add_argument('--find_best', action='store_true', default=False,
+                        help='find best model in save directory')
+        
     def __init__(self, args):
         # Fix random seed
         torch.manual_seed(args.seed)
@@ -134,7 +250,7 @@ class Trainer(object):
         results = {'targets': [], 'inputs': [], 'recon': []}
         # Only compute reconstruction loss for specified modalities
         rec_mults = dict(args.rec_mults)
-        if args.eval_mods is not None:
+        if args.eval_mods != 'all':
             for m in rec_mults:
                 rec_mults[m] *= float(m in args.eval_mods)
         # Iterate over batches

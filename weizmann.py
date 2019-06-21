@@ -4,7 +4,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
-import os, argparse, yaml
+import os, copy
 
 import numpy as np
 import torch
@@ -19,15 +19,39 @@ import trainer
 class WeizmannTrainer(trainer.Trainer):
     """Class for training on the Weizmann human action dataset."""
 
+    parser = copy.copy(trainer.Trainer.parser)
+
+    # Rewrite split help function to be more clear
+    for action in parser._actions:
+        if action.dest != 'split':
+            continue
+        action.help = 'split each training sequence into L-sized chunks'
+        action.metavar = 'L'
+    
+    # Set parameter defaults for Weizmann dataset
+    defaults = {
+        'modalities' : ['video', 'person', 'action'],
+        'batch_size' : 50, 'split' : 25, 'bylen' : True,
+        'epochs' : 3000, 'lr' : 5e-4,
+        'rec_mults' : {'video': 1, 'person': 10, 'action': 10},
+        'kld_anneal' : 1500, 'burst_frac' : 0.2,
+        'drop_frac' : 0.5, 'start_frac' : 0, 'stop_frac' : 1,
+        'eval_metric' : 'rec_loss', 'viz_metric' : 'ssim',
+        'eval_freq' : 10, 'save_freq' : 10,
+        'data_dir' : './datasets/weizmann',
+        'save_dir' : './weizmann_save'
+    }
+    parser.set_defaults(**defaults)
+    
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
         dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
         dists = {'video': 'Bernoulli',
                  'person': 'Categorical',
                  'action': 'Categorical'}
-        gauss_out = (args.model != 'MultiDKS')
         z_dim = args.model_args.get('z_dim', 256)
         h_dim = args.model_args.get('h_dim', 256)
+        gauss_out = (args.model != 'MultiDKS')
         image_encoder = models.common.ImageEncoder(z_dim, gauss_out)
         image_decoder = models.common.ImageDecoder(z_dim)
         model = constructor(args.modalities,
@@ -41,11 +65,6 @@ class WeizmannTrainer(trainer.Trainer):
 
     def default_args(self, args):
         """Fill unspecified args with default values."""
-        # Default reconstruction loss multipliers
-        if args.rec_mults is None:
-            args.rec_mults = {'video': 1,
-                              'person': 10,
-                              'action': 10}
         return args
 
     def load_data(self, modalities, args):
@@ -321,94 +340,6 @@ class WeizmannTrainer(trainer.Trainer):
             vwriter.release()
     
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--modalities', type=str, nargs='+',
-                        default=['video', 'person', 'action'],
-                        help='input modalities (default: all)')
-    parser.add_argument('--model', type=str, default='dmm', metavar='S',
-                        help='name of model to train (default: dmm)')
-    parser.add_argument('--model_args', type=yaml.safe_load, default=dict(),
-                        help='additional model arguments as yaml dict')
-    parser.add_argument('--train_args', type=yaml.safe_load, default=dict(),
-                        help='additional training arguments as yaml dict')
-    parser.add_argument('--eval_args', type=yaml.safe_load, default=dict(),
-                        help='additional evaluation arguments as yaml dict')
-    parser.add_argument('--save_args', type=yaml.safe_load, default=dict(),
-                        help='results saving arguments as yaml dict')
-    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
-                        help='input batch size for training (default: 50)')
-    parser.add_argument('--split', type=int, default=25, metavar='K',
-                        help='split data into K-sized chunks (default: 25)')
-    parser.add_argument('--bylen', action='store_true', default=True,
-                        help='whether to split by length')
-    parser.add_argument('--epochs', type=int, default=3000, metavar='N',
-                        help='number of epochs to train (default: 3000)')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
-                        help='learning rate (default: 5e-4)')
-    parser.add_argument('--w_decay', type=float, default=0, metavar='F',
-                        help='Adam weight decay (default: 0)')
-    parser.add_argument('--clip_grad', type=float, default=None, metavar='F',
-                        help='clip gradients to this norm (default: None)')
-    parser.add_argument('--base_rate', type=float, default=None, metavar='R',
-                        help='sampling rate to resample to')
-    parser.add_argument('--seed', type=int, default=1, metavar='N',
-                        help='random seed (default: 1)')
-    parser.add_argument('--kld_mult', type=float, default=1.0, metavar='F',
-                        help='max kld loss multiplier (default: 1.0)')
-    parser.add_argument('--rec_mults', type=yaml.safe_load, default=None,
-                        help='reconstruction loss multiplier')
-    parser.add_argument('--kld_anneal', type=int, default=1500, metavar='N',
-                        help='epochs to anneal kld_mult over (default: 1500)')
-    parser.add_argument('--burst_frac', type=float, default=0.2, metavar='F',
-                        help='burst error rate during training (default: 0.2)')
-    parser.add_argument('--drop_frac', type=float, default=0.5, metavar='F',
-                        help='fraction of data to randomly drop at test time')
-    parser.add_argument('--start_frac', type=float, default=0, metavar='F',
-                        help='fraction of test trajectory to begin at')
-    parser.add_argument('--stop_frac', type=float, default=1, metavar='F',
-                        help='fraction of test trajectory to stop at')
-    parser.add_argument('--drop_mods', type=str, default=[], nargs='+',
-                        help='modalities to delete at test (default: none')
-    parser.add_argument('--keep_mods', type=str, default=[], nargs='+',
-                        help='modalities to retain at test (default: none')
-    parser.add_argument('--eval_mods', type=str, default=None, nargs='+',
-                        help='modalities to evaluate at test (default: none')
-    parser.add_argument('--eval_metric', type=str, default='rec_loss',
-                        help='metric to track best model (default: rec_loss)')
-    parser.add_argument('--viz_metric', type=str, default='ssim',
-                        help='metric for visualization (default: ssim)')
-    parser.add_argument('--log_freq', type=int, default=5, metavar='N',
-                        help='print loss N times every epoch (default: 5)')
-    parser.add_argument('--eval_freq', type=int, default=10, metavar='N',
-                        help='evaluate every N epochs (default: 10)')
-    parser.add_argument('--save_freq', type=int, default=10, metavar='N',
-                        help='save every N epochs (default: 10)')
-    parser.add_argument('--device', type=str, default='cuda:0',
-                        help='device to use (default: cuda:0 if available)')
-    parser.add_argument('--anomaly_check', action='store_true', default=False,
-                        help='check for gradient anomalies (default: false)')
-    parser.add_argument('--visualize', action='store_true', default=False,
-                        help='flag to visualize predictions (default: false)')
-    parser.add_argument('--gradients', action='store_true', default=False,
-                        help='flag to plot gradients (default: false)')
-    parser.add_argument('--normalize', type=str, default=[], nargs='+',
-                        help='modalities to normalize (default: [])')
-    parser.add_argument('--corrupt', type=yaml.safe_load, default=dict(),
-                        help='options to corrupt training data')
-    parser.add_argument('--test', action='store_true', default=False,
-                        help='evaluate without training (default: false)')
-    parser.add_argument('--load', type=str, default=None,
-                        help='path to trained model (either resume or test)')
-    parser.add_argument('--find_best', action='store_true', default=False,
-                        help='find best model in save directory')
-    parser.add_argument('--data_dir', type=str, default="./datasets/weizmann",
-                        help='path to data base directory')
-    parser.add_argument('--save_dir', type=str, default="./weizmann_save",
-                        help='path to save models and predictions')
-    parser.add_argument('--train_subdir', type=str, default='train',
-                        help='training data subdirectory')
-    parser.add_argument('--test_subdir', type=str, default='test',
-                        help='testing data subdirectory')
-    args = parser.parse_args()
+    args = WeizmannTrainer.parser.parse_args()
     trainer = WeizmannTrainer(args)
     trainer.run(args)
