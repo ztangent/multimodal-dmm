@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 
 from datasets import weizmann
 from utils import eval_ssim
-
 import models
 import trainer
 
@@ -322,6 +321,9 @@ class WeizmannTrainer(trainer.Trainer):
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument('--modalities', type=str, nargs='+',
+                        default=['video', 'person', 'action'],
+                        help='input modalities (default: all)')
     parser.add_argument('--model', type=str, default='dmm', metavar='S',
                         help='name of model to train (default: dmm)')
     parser.add_argument('--model_args', type=yaml.safe_load, default=dict(),
@@ -332,8 +334,6 @@ if __name__ == "__main__":
                         help='additional evaluation arguments as yaml dict')
     parser.add_argument('--save_args', type=yaml.safe_load, default=dict(),
                         help='results saving arguments as yaml dict')
-    parser.add_argument('--modalities', type=str, default=None, nargs='+',
-                        help='input modalities (default: all)')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
                         help='input batch size for training (default: 50)')
     parser.add_argument('--split', type=int, default=25, metavar='K',

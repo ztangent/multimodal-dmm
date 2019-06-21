@@ -212,7 +212,7 @@ class MultiseqDataset(Dataset):
         dataset.normalize_(modalities, method, ref_data)
         return dataset
             
-    def split_(self, n, n_is_len=False):
+    def split_(self, n, n_is_len=True):
         """Splits each sequence into chunks (in place)."""
         if n_is_len:
             # Use n as maximum chunk length
@@ -231,7 +231,7 @@ class MultiseqDataset(Dataset):
                 [[i] * n for i in self.seq_ids]))            
         self.lengths = [len(d) for d in self.data[self.modalities[0]]]
 
-    def split(self, n, n_is_len=False):
+    def split(self, n, n_is_len=True):
         """Splits each sequence into chunks (returns new dataset)."""
         dataset = copy.deepcopy(self)
         dataset.split_(n, n_is_len)
