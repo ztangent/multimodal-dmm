@@ -15,6 +15,44 @@ import trainer
 
 class SpiralsTrainer(trainer.Trainer):
     """Class for training on noisy 2D spirals."""
+
+    def build_model(self, constructor, args):
+        """Construct model using provided constructor."""
+        dims = {'spiral-x': 1, 'spiral-y': 1}
+        model = constructor(args.modalities,
+                            dims=(dims[m] for m in args.modalities),
+                            z_dim=5, h_dim=20,
+                            device=args.device, **args.model_args)
+        return model
+
+    def default_args(self, args):
+        """Fill unspecified args with default values."""
+        # Default reconstruction loss multipliers
+        if args.rec_mults is None:
+            dims = self.model.dims
+            corrupt_mult = 1 / (1 - args.corrupt.get('uniform', 0.0))
+            args.rec_mults = {m : ((1.0 / dims[m]) / len(args.modalities)
+                                   * corrupt_mult)
+                              for m in args.modalities}
+        return args
+
+    def load_data(self, modalities, args):
+        """Loads data for specified modalities."""
+        print("Loading data...")
+        data_dir = os.path.abspath(args.data_dir)
+        train_data = SpiralsDataset(modalities, data_dir, args.train_subdir,
+                                    truncate=True, item_as_dict=True)
+        test_data = SpiralsDataset(modalities, data_dir, args.test_subdir,
+                                   truncate=True, item_as_dict=True)
+        print("Done.")
+        if len(args.normalize) > 0:
+            print("Normalizing ", args.normalize, "...")
+            # Normalize test data using training data as reference
+            test_data.normalize_(modalities=args.normalize,
+                                 ref_data=train_data)
+            # Normalize training data in-place
+            train_data.normalize_(modalities=args.normalize)
+        return train_data, test_data
     
     def compute_metrics(self, model, infer, prior, recon,
                         targets, mask, lengths, order, args):
@@ -103,6 +141,7 @@ class SpiralsTrainer(trainer.Trainer):
         plt.pause(1.0 if args.test else 0.001)
 
     def plot_spiral(self, axis, true, data, obsv, pred, rng):
+        """Plots a single spiral on provided axis."""
         axis.cla()
         # Plot 95% confidence ellipses
         ec = EllipseCollection(1.96*rng[0], 1.96*rng[1], (0,), units='x',
@@ -129,49 +168,6 @@ class SpiralsTrainer(trainer.Trainer):
 
     def save_results(self, results, args):
         pass
-
-    def save_checkpoint(self, modalities, model, path):
-        checkpoint = {'modalities': modalities, 'model': model.state_dict()}
-        torch.save(checkpoint, path)
-
-    def load_checkpoint(self, path, device):
-        checkpoint = torch.load(path, map_location=device)
-        return checkpoint
-
-    def load_data(self, modalities, args):
-        print("Loading data...")
-        data_dir = os.path.abspath(args.data_dir)
-        train_data = SpiralsDataset(modalities, data_dir, args.train_subdir,
-                                    truncate=True, item_as_dict=True)
-        test_data = SpiralsDataset(modalities, data_dir, args.test_subdir,
-                                   truncate=True, item_as_dict=True)
-        print("Done.")
-        if len(args.normalize) > 0:
-            print("Normalizing ", args.normalize, "...")
-            # Normalize test data using training data as reference
-            test_data.normalize_(modalities=args.normalize,
-                                 ref_data=train_data)
-            # Normalize training data in-place
-            train_data.normalize_(modalities=args.normalize)
-        return train_data, test_data
-
-    def build_model(self, constructor, args):
-        dims = {'spiral-x': 1, 'spiral-y': 1}
-        model = constructor(args.modalities,
-                            dims=(dims[m] for m in args.modalities),
-                            z_dim=5, h_dim=20,
-                            device=args.device, **args.model_args)
-        return model
-
-    def default_args(self, args, model):
-        """Fill unspecified args with default values."""
-        # Default reconstruction loss multipliers
-        if args.rec_mults is None:
-            corrupt_mult = 1 / (1 - args.corrupt.get('uniform', 0.0))
-            args.rec_mults = {m : ((1.0 / model.dims[m]) / len(args.modalities)
-                                   * corrupt_mult)
-                              for m in args.modalities}
-        return args
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -190,6 +186,8 @@ if __name__ == "__main__":
                         help='input batch size for training (default: 100)')
     parser.add_argument('--split', type=int, default=1, metavar='N',
                         help='sections to split each video into (default: 1)')
+    parser.add_argument('--bylen', action='store_true', default=False,
+                        help='whether to split by length')
     parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 100)')
     parser.add_argument('--lr', type=float, default=1e-4, metavar='LR',
@@ -257,5 +255,5 @@ if __name__ == "__main__":
     parser.add_argument('--test_subdir', type=str, default='test',
                         help='testing data subdirectory')
     args = parser.parse_args()
-    trainer = SpiralsTrainer()
+    trainer = SpiralsTrainer(args)
     trainer.run(args)

@@ -19,6 +19,54 @@ import trainer
 class WeizmannTrainer(trainer.Trainer):
     """Class for training on the Weizmann human action dataset."""
 
+    def build_model(self, constructor, args):
+        """Construct model using provided constructor."""
+        dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
+        dists = {'video': 'Bernoulli',
+                 'person': 'Categorical',
+                 'action': 'Categorical'}
+        gauss_out = (args.model != 'MultiDKS')
+        z_dim = args.model_args.get('z_dim', 256)
+        h_dim = args.model_args.get('h_dim', 256)
+        image_encoder = models.common.ImageEncoder(z_dim, gauss_out)
+        image_decoder = models.common.ImageDecoder(z_dim)
+        model = constructor(args.modalities,
+                            dims=[dims[m] for m in args.modalities],
+                            dists=[dists[m] for m in args.modalities],
+                            encoders={'video': image_encoder},
+                            decoders={'video': image_decoder},
+                            z_dim=z_dim, h_dim=h_dim,
+                            device=args.device, **args.model_args)
+        return model
+
+    def default_args(self, args):
+        """Fill unspecified args with default values."""
+        # Default reconstruction loss multipliers
+        if args.rec_mults is None:
+            args.rec_mults = {'video': 1,
+                              'person': 10,
+                              'action': 10}
+        return args
+
+    def load_data(self, modalities, args):
+        print("Loading data...")
+        data_dir = os.path.abspath(args.data_dir)
+        all_data = weizmann.WeizmannDataset(data_dir, item_as_dict=True)
+        all_persons = all_data.seq_id_sets[0]
+        # Leave one person out of training set
+        train_data = all_data.select([['shahar'], None], invert=True)
+        # Test on left out person
+        test_data = all_data.select([['shahar'], None])
+        print("Done.")
+        if len(args.normalize) > 0:
+            print("Normalizing ", args.normalize, "...")
+            # Normalize test data using training data as reference
+            test_data.normalize_(modalities=args.normalize,
+                                 ref_data=train_data)
+            # Normalize training data in-place
+            train_data.normalize_(modalities=args.normalize)
+        return train_data, test_data
+    
     def compute_metrics(self, model, infer, prior, recon,
                         targets, mask, lengths, order, args):
         """Compute evaluation metrics from batch of inputs and outputs."""    
@@ -271,53 +319,6 @@ class WeizmannTrainer(trainer.Trainer):
 
         if save_args['one_file']:
             vwriter.release()
-
-    def load_data(self, modalities, args):
-        print("Loading data...")
-        data_dir = os.path.abspath(args.data_dir)
-        all_data = weizmann.WeizmannDataset(data_dir, item_as_dict=True)
-        all_persons = all_data.seq_id_sets[0]
-        # Leave one person out of training set
-        train_data = all_data.select([['shahar'], None], invert=True)
-        # Test on left out person
-        test_data = all_data.select([['shahar'], None])
-        print("Done.")
-        if len(args.normalize) > 0:
-            print("Normalizing ", args.normalize, "...")
-            # Normalize test data using training data as reference
-            test_data.normalize_(modalities=args.normalize,
-                                 ref_data=train_data)
-            # Normalize training data in-place
-            train_data.normalize_(modalities=args.normalize)
-        return train_data, test_data
-
-    def build_model(self, constructor, args):
-        dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
-        dists = {'video': 'Bernoulli',
-                 'person': 'Categorical',
-                 'action': 'Categorical'}
-        gauss_out = (args.model != 'MultiDKS')
-        z_dim = args.model_args.get('z_dim', 256)
-        h_dim = args.model_args.get('h_dim', 256)
-        image_encoder = models.common.ImageEncoder(z_dim, gauss_out)
-        image_decoder = models.common.ImageDecoder(z_dim)
-        model = constructor(args.modalities,
-                            dims=[dims[m] for m in args.modalities],
-                            dists=[dists[m] for m in args.modalities],
-                            encoders={'video': image_encoder},
-                            decoders={'video': image_decoder},
-                            z_dim=z_dim, h_dim=h_dim,
-                            device=args.device, **args.model_args)
-        return model
-
-    def default_args(self, args, model):
-        """Fill unspecified args with default values."""
-        # Default reconstruction loss multipliers
-        if args.rec_mults is None:
-            args.rec_mults = {'video': 1,
-                              'person': 10,
-                              'action': 10}
-        return args
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -338,6 +339,8 @@ if __name__ == "__main__":
                         help='input batch size for training (default: 50)')
     parser.add_argument('--split', type=int, default=25, metavar='K',
                         help='split data into K-sized chunks (default: 25)')
+    parser.add_argument('--bylen', action='store_true', default=True,
+                        help='whether to split by length')
     parser.add_argument('--epochs', type=int, default=3000, metavar='N',
                         help='number of epochs to train (default: 3000)')
     parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
@@ -407,5 +410,5 @@ if __name__ == "__main__":
     parser.add_argument('--test_subdir', type=str, default='test',
                         help='testing data subdirectory')
     args = parser.parse_args()
-    trainer = WeizmannTrainer()
+    trainer = WeizmannTrainer(args)
     trainer.run(args)
