@@ -511,9 +511,20 @@ class Trainer(object):
     def tune(cls, config, reporter):
         """Trainable method for use with Ray Tune API."""
         # Set up parameter namespace with default arguments
-        args = cls.parser.parse_args()
+        args = cls.parser.parse_args([])
+        # Construct save directory name
+        def dict_to_str(d, prefix=''):
+            s = []
+            for k, v in d.iteritems():
+                if type(v) == dict:
+                    s.append(dict_to_str(v, prefix=k+'_'))
+                else:
+                    s.append("{}={}".format(k, str(v)))
+            return "," .join(s)
+        save_dir = args.save_dir + dict_to_str(config)
         # Override with arguments provided by Tune
         vars(args).update(config)
+        args.save_dir = save_dir
         # Construct trainer, and pass in reporter
         trainer = cls(args)
         trainer.run_train(args, reporter)
