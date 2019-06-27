@@ -242,6 +242,7 @@ class Trainer(object):
         return loss
 
     def evaluate(self, loader, args):
+        """Evaluates model on dataset."""
         model = self.model
         model.eval()
         # Set up accumulators
@@ -414,8 +415,16 @@ class Trainer(object):
         # Save command line flags, model params
         self.save_params(args)
 
-    def run_train(self, args):
-        """Train model over many epochs."""
+    def run_train(self, args, reporter=None):
+        """Train model over many epochs.
+
+        Parameters
+        ----------
+        args : argparse.Namespace
+            command line args and hyperparameters
+        reporter : ray.tune.function_runner.StatusReporter
+            optional status reporter for use by Ray Tune API
+        """
         train_data, test_data = self.train_data, self.test_data
         
         # Corrupt training data if flags are specified
@@ -458,6 +467,10 @@ class Trainer(object):
                 with torch.no_grad():
                     _, metrics = self.evaluate(test_loader, args)
                     loss = metrics[args.eval_metric]
+                # Report metrics and epoch if Ray Tune reporter is given
+                if reporter is not None:
+                    reporter(mean_loss=loss, training_iteration=epoch,
+                             done=np.isnan(loss), **metrics)
                 # Save model with best metric so far (lower is better)
                 if loss < best_loss:
                     best_loss = loss
@@ -475,6 +488,10 @@ class Trainer(object):
 
         # Save command line flags, model params and performance statistics
         self.save_params(args)
+
+        # Report done
+        if reporter is not None:
+            reporter(done=True)
         
     def run(self, args):
         # Evaluate model if test flag is set
@@ -489,3 +506,14 @@ class Trainer(object):
 
         # Train model if neither flag is specified
         self.run_train(args)
+
+    @classmethod
+    def tune(cls, config, reporter):
+        """Trainable method for use with Ray Tune API."""
+        # Set up parameter namespace with default arguments
+        args = cls.parser.parse_args()
+        # Override with arguments provided by Tune
+        vars(args).update(config)
+        # Construct trainer, and pass in reporter
+        trainer = cls(args)
+        trainer.run_train(args, reporter)
