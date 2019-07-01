@@ -3,7 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
-import argparse
+import os, argparse
 
 import ray
 import ray.tune as tune
@@ -37,11 +37,15 @@ if __name__ == "__main__":
 
     trainable = lambda c, r : SpiralsTrainer.tune(c, r)
     tune.register_trainable("spirals_tune", trainable)
+
+    # Convert data dir to absolute path so that Ray trials can find it
+    data_dir = os.path.abspath(SpiralsTrainer.defaults['data_dir'])
     
     trials = tune.run(
         "spirals_tune",
         name="semisup_spirals",
         config={
+            "data_dir": data_dir,
             "eval_args": {'flt_particles': 200},
             # Set low learning rate to prevent NaNs
             "lr": 5e-3,

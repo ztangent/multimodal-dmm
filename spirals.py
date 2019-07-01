@@ -85,9 +85,9 @@ class SpiralsTrainer(trainer.Trainer):
         if type(lengths) != torch.tensor:
             lengths = torch.tensor(lengths).float().to(args.device)
         # Compute and store KLD and reconstruction losses
-        metrics['kld_loss'] = model.kld_loss(infer, prior, mask)
+        metrics['kld_loss'] = model.kld_loss(infer, prior, mask).item()
         metrics['rec_loss'] = model.rec_loss(targets, recon, mask,
-                                             args.rec_mults)
+                                             args.rec_mults).item()
         # Compute mean squared error in 2D space for each time-step
         mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
         mse = mse.sum(dim=range(2, mse.dim()))

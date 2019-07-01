@@ -95,9 +95,9 @@ class WeizmannTrainer(trainer.Trainer):
             lengths = torch.tensor(lengths).float().to(args.device)
 
         # Compute and store KLD and reconstruction losses
-        metrics['kld_loss'] = model.kld_loss(infer, prior, mask)
+        metrics['kld_loss'] = model.kld_loss(infer, prior, mask).item()
         metrics['rec_loss'] = model.rec_loss(targets, recon, mask,
-                                             args.rec_mults)
+                                             args.rec_mults).item()
 
         # Compute video mean squared error and SSIM for each timestep
         rec_vid, tgt_vid = recon['video'][0], targets['video']

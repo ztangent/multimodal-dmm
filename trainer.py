@@ -469,8 +469,8 @@ class Trainer(object):
                     loss = metrics[args.eval_metric]
                 # Report metrics and epoch if Ray Tune reporter is given
                 if reporter is not None:
-                    reporter(mean_loss=loss, training_iteration=epoch,
-                             done=np.isnan(loss), **metrics)
+                    reporter(mean_loss=loss.item(), training_iteration=epoch,
+                             done=np.isnan(loss.item()), **metrics)
                 # Save model with best metric so far (lower is better)
                 if loss < best_loss:
                     best_loss = loss
@@ -512,19 +512,8 @@ class Trainer(object):
         """Trainable method for use with Ray Tune API."""
         # Set up parameter namespace with default arguments
         args = cls.parser.parse_args([])
-        # Construct save directory name
-        def dict_to_str(d, prefix=''):
-            s = []
-            for k, v in d.iteritems():
-                if type(v) == dict:
-                    s.append(dict_to_str(v, prefix=k+'_'))
-                else:
-                    s.append("{}={}".format(k, str(v)))
-            return "," .join(s)
-        save_dir = args.save_dir + dict_to_str(config)
         # Override with arguments provided by Tune
         vars(args).update(config)
-        args.save_dir = save_dir
         # Construct trainer, and pass in reporter
         trainer = cls(args)
         trainer.run_train(args, reporter)
