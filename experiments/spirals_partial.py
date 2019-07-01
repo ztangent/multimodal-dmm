@@ -1,4 +1,4 @@
-"""Semi-supervised learning experiment for spirals dataset."""
+"""Learning with partial/missing data for spirals dataset."""
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     
     trials = tune.run(
         "spirals_tune",
-        name="semisup_spirals",
+        name="spirals_partial",
         config={
             "data_dir": data_dir,
             "eval_args": {'flt_particles': 200},

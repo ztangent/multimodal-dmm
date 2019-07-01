@@ -65,6 +65,10 @@ class WeizmannTrainer(trainer.Trainer):
 
     def default_args(self, args):
         """Fill unspecified args with default values."""
+        # Scale up reconstruction loss depending on how much data is corrupted
+        corrupt_mult = 1 / (1 - args.corrupt.get('uniform', 0.0))
+        args.rec_mults = {m : args.rec_mults[m] * corrupt_mult
+                          for m in args.modalities}
         return args
 
     def load_data(self, modalities, args):
