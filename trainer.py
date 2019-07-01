@@ -469,8 +469,8 @@ class Trainer(object):
                     loss = metrics[args.eval_metric]
                 # Report metrics and epoch if Ray Tune reporter is given
                 if reporter is not None:
-                    reporter(mean_loss=loss.item(), training_iteration=epoch,
-                             done=np.isnan(loss.item()), **metrics)
+                    reporter(mean_loss=loss, training_iteration=epoch,
+                             done=np.isnan(loss), **metrics)
                 # Save model with best metric so far (lower is better)
                 if loss < best_loss:
                     best_loss = loss
@@ -489,9 +489,10 @@ class Trainer(object):
         # Save command line flags, model params and performance statistics
         self.save_params(args)
 
-        # Report done
+        # Report done to Ray Tune
         if reporter is not None:
-            reporter(done=True)
+            reporter(mean_loss=loss, training_iteration=epoch,
+                     done=True, **metrics)
         
     def run(self, args):
         # Evaluate model if test flag is set
