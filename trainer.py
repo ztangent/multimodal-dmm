@@ -467,15 +467,16 @@ class Trainer(object):
                 with torch.no_grad():
                     _, metrics = self.evaluate(test_loader, args)
                     loss = metrics[args.eval_metric]
-                # Report metrics and epoch if Ray Tune reporter is given
-                if reporter is not None:
-                    reporter(mean_loss=loss, training_iteration=epoch,
-                             done=np.isnan(loss), **metrics)
                 # Save model with best metric so far (lower is better)
                 if loss < best_loss:
                     best_loss = loss
                     path = os.path.join(args.save_dir, "best.pth") 
                     self.save_checkpoint(args.modalities, self.model, path)
+                # Report metrics and epoch if Ray Tune reporter is given
+                if reporter is not None:
+                    reporter(mean_loss=loss, best_loss=best_loss,
+                             training_iteration=epoch, done=np.isnan(loss),
+                             **metrics)
             # Save checkpoints
             if epoch % args.save_freq == 0:
                 path = os.path.join(args.save_dir,
@@ -491,8 +492,8 @@ class Trainer(object):
 
         # Report done to Ray Tune
         if reporter is not None:
-            reporter(mean_loss=loss, training_iteration=epoch,
-                     done=True, **metrics)
+            reporter(mean_loss=loss, best_loss=best_loss,
+                     training_iteration=epoch, done=True, **metrics)
         
     def run(self, args):
         # Evaluate model if test flag is set

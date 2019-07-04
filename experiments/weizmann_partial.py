@@ -23,6 +23,12 @@ if __name__ == "__main__":
                         help='max CPUs for all trials')
     parser.add_argument('--max_gpus', type=int, default=None, metavar='N',
                         help='max GPUs for all trials')
+    parser.add_argument('--local_dir', type=str, default="./",
+                    help='path to Ray results')
+    parser.add_argument('--exp_name', type=str, default="weizmann_partial",
+                        help='experiment name')
+    parser.add_argument('--config', type=yaml.safe_load, default={},
+                        help='trial configuration arguments')
     args = parser.parse_args()
 
     # If max resources not specified, default to maximum - 1
@@ -40,19 +46,25 @@ if __name__ == "__main__":
 
     # Convert data dir to absolute path so that Ray trials can find it
     data_dir = os.path.abspath(WeizmannTrainer.defaults['data_dir'])
+
+    # Set up trial configuration
+    config = {
+        "data_dir": data_dir,
+        "eval_args": {'flt_particles': 200},
+        # Set low learning rate to prevent NaNs
+        "lr": 5e-4,
+        # Repeat each configuration with different random seeds
+        "seed": tune.grid_search(range(args.n_repeats)),
+        # Iterate over uniform data deletion in 10% steps
+        "corrupt": tune.grid_search([{'uniform': i/5} for i in range(5)])
+    }
+    # Update config with parameters from command line
+    config.update(args.config)
     
     trials = tune.run(
         "weizmann_tune",
-        name="weizmann_partial",
-        config={
-            "data_dir": data_dir,
-            "eval_args": {'flt_particles': 200},
-            "lr": 5e-4,
-            # Repeat each configuration with different random seeds
-            "seed": tune.grid_search(range(args.n_repeats)),
-            # Iterate over uniform data deletion in 20% steps
-            "corrupt": tune.grid_search([{'uniform': i/5} for i in range(10)])
-        },
+        name=args.exp_name,
+        config=config,
         local_dir="./",
         resources_per_trial={"cpu": args.trial_cpus, "gpu": args.trial_gpus}
     )
