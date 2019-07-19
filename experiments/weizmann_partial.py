@@ -33,7 +33,7 @@ parser.add_argument('--exp_name', type=str, default="weizmann_partial",
 parser.add_argument('--config', type=yaml.safe_load, default={},
                     help='trial configuration arguments')
 parser.add_argument('--method', type=str, default='bfvi', metavar='S',
-                    help='inference method: bfvi, l/r-mask, or l/r-skip')
+                    help='inference method: bfvi, b/f-mask, or b/f-skip')
 
 def run(args):
     """Runs Ray experiments."""
@@ -63,7 +63,7 @@ def run(args):
     }
 
     # Set up model and eval args
-    if args.method not in ['bfvi', 'l-mask', 'r-mask', 'l-skip', 'r-skip']:
+    if args.method not in ['bfvi', 'b-mask', 'f-mask', 'b-skip', 'f-skip']:
         args.method = 'bfvi'
     if args.method == 'bfvi':
         config['model'] = 'dmm'
@@ -72,7 +72,7 @@ def run(args):
         config['model'] = 'dks'
         config['model_args'] = {
             "rnn_skip" : 'skip' in args.method,
-            "rnn_dir" : 'bwd' if args.method[0] == 'r' else 'fwd',
+            "rnn_dir" : 'bwd' if args.method[0] == 'b' else 'fwd',
             "feat_to_z" : True
         }
         config['train_args'] = {'uni_loss': True}
