@@ -5,7 +5,6 @@ from __future__ import absolute_import
 import os, sys
 
 import numpy as np
-import skvideo.io
 
 if __name__ == '__main__':
     from multiseq import MultiseqDataset, seq_collate
@@ -35,7 +34,7 @@ class WeizmannDataset(MultiseqDataset):
             ids_as_mods=['person', 'action'], item_as_dict=item_as_dict)
 
 def download_weizmann(dest='./weizmann'):
-    """Downloads and preprocesses Weizmann human action dataset."""
+    """Downloads and preprocesses Weizmann human action dataset."""    
     src_url = ('http://www.wisdom.weizmann.ac.il/~vision/' +
                'VideoAnalysis/Demos/SpaceTimeActions/DB/')
     
@@ -59,6 +58,7 @@ def download_weizmann(dest='./weizmann'):
                      '-vf': 'crop=128:128:26:8'}
 
     import zipfile
+    import skvideo.io
     if not os.path.exists(dest):
         os.mkdir(dest)
     for act in actions:
