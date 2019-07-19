@@ -5,6 +5,7 @@ from __future__ import absolute_import
 
 import os, argparse, yaml
 
+import pandas as pd
 import ray
 import ray.tune as tune
 
@@ -83,21 +84,34 @@ def analyze(args):
     # Iterate across trials
     for i, trial in df.iterrows():
         print("Trial:", trial['experiment_tag'])
-        trial_df = ea.trial_dataframe(trial['trial_id'])
+        try:
+            trial_df = ea.trial_dataframe(trial['trial_id'])
+        except(pd.errors.EmptyDataError):
+            print("No progress data to read for trial, skipping...")
+            continue
         del_frac = trial['config:corrupt:uniform']
         best_loss = trial_df.mean_loss.min()
         print("Best loss:", best_loss)
         print("---")
 
-        # Store best loss for each level of deletion
-        if best_loss < losses.get(del_frac, float('inf')):
-            losses[del_frac] = best_loss
+        # Store best loss for each trial and each level of deletion
+        if del_frac not in losses:
+            losses[del_frac] = []
+        losses[del_frac].append(best_loss)
 
-    # Print best losses per deletion fraction
+    # Print average of the best 3 losses per deletion fraction
     print("del_frac\tloss")
     del_fracs = sorted(losses.keys())
     for del_frac in del_fracs:
+        best_losses = sorted(losses[del_frac])[:3]
+        losses[del_frac] = sum(best_losses) / 3
         print("{}\t\t{:0.3f}".format(del_frac, losses[del_frac]))
+
+    # Save losses to CSV file
+    losses_df = pd.DataFrame.from_dict(losses, orient='index',
+                                       columns=['loss']).sort_index()
+    losses_df.index.name = 'del_frac'
+    losses_df.to_csv(os.path.join(exp_dir, 'best_losses.csv'))
         
 if __name__ == "__main__":
     args = parser.parse_args()
