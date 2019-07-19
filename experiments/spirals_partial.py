@@ -32,6 +32,8 @@ parser.add_argument('--exp_name', type=str, default="spirals_partial",
                     help='experiment name')
 parser.add_argument('--config', type=yaml.safe_load, default={},
                     help='trial configuration arguments')
+parser.add_argument('--method', type=str, default='bfvi', metavar='S',
+                    help='inference method: bfvi, l/r-mask, or l/r-skip')
 
 def run(args):
     """Runs Ray experiments."""
@@ -45,16 +47,12 @@ def run(args):
     
     ray.init(num_cpus=args.max_cpus, num_gpus=args.max_gpus)
 
-    trainable = lambda c, r : SpiralsTrainer.tune(c, r)
-    tune.register_trainable("spirals_tune", trainable)
-
     # Convert data dir to absolute path so that Ray trials can find it
     data_dir = os.path.abspath(SpiralsTrainer.defaults['data_dir'])
-
+            
     # Set up trial configuration
     config = {
         "data_dir": data_dir,
-        "eval_args": {'flt_particles': 200},
         # Set low learning rate to prevent NaNs
         "lr": 5e-3,
         # Repeat each configuration with different random seeds
@@ -62,10 +60,29 @@ def run(args):
         # Iterate over uniform data deletion in 10% steps
         "corrupt": tune.grid_search([{'uniform': i/10} for i in range(10)])
     }
+
+    # Set up model and eval args
+    if args.method not in ['bfvi', 'l-mask', 'r-mask', 'l-skip', 'r-skip']:
+        args.method = 'bfvi'
+    if args.method == 'bfvi':
+        config['model'] = 'dmm'
+        config['eval_args'] = {'flt_particles': 200}
+    else:
+        config['model'] = 'dks'
+        config['model_args'] = {
+            "rnn_skip" : 'skip' in args.method,
+            "rnn_dir" : 'bwd' if args.method[0] == 'r' else 'fwd',
+            "feat_to_z" : False
+        }
+        config['train_args'] = {'uni_loss': False}
+    
     # Update config with parameters from command line
     config.update(args.config)
     
-    # Run trials
+    # Register trainable and run trials
+    trainable = lambda c, r : SpiralsTrainer.tune(c, r)
+    tune.register_trainable("spirals_tune", trainable)
+
     trials = tune.run(
         "spirals_tune",
         name=args.exp_name,
