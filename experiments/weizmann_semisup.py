@@ -1,4 +1,4 @@
-"""Learning with partial/missing data for the Weizmann dataset."""
+"""Semi-supervised learning experiments for the Weizmann dataset."""
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
@@ -28,7 +28,7 @@ parser.add_argument('--max_gpus', type=int, default=None, metavar='N',
                     help='max GPUs for all trials')
 parser.add_argument('--local_dir', type=str, default="./",
                 help='path to Ray results')
-parser.add_argument('--exp_name', type=str, default="weizmann_partial",
+parser.add_argument('--exp_name', type=str, default="weizmann_semisup",
                     help='experiment name')
 parser.add_argument('--config', type=yaml.safe_load, default={},
                     help='trial configuration arguments')
@@ -63,8 +63,9 @@ def run(args):
         "drop_mods": ['action', 'person'],
         # Repeat each configuration with different random seeds
         "seed": tune.grid_search(range(args.n_repeats)),
-        # Iterate over uniform data deletion in 10% steps
-        "corrupt": tune.grid_search([{'uniform': i/5} for i in range(5)])
+        # Delete action labels in 20% steps
+        "corrupt": tune.grid_search([{'semi': i/5, 'modalities': ['action']}
+                                     for i in range(5)])
     }
 
     # Set up model and eval args
@@ -112,7 +113,7 @@ def analyze(args):
         except(pd.errors.EmptyDataError):
             print("No progress data to read for trial, skipping...")
             continue
-        del_frac = trial['config:corrupt:uniform']
+        del_frac = trial['config:corrupt:semi']
         best_idx = trial_df.mean_loss.idxmin()
         best_loss, best_ssim, best_act_acc =\
             trial_df[['mean_loss', 'ssim', 'action']].iloc[best_idx]
