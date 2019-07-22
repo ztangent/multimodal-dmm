@@ -85,6 +85,7 @@ class ExperimentAnalysis(object):
         trial_dfs = {}
         for checkpoint in self._checkpoints:
             logdir = checkpoint["logdir"]
+            logdir = logdir.replace('[', '[[]')
             progress = max(glob.glob(os.path.join(logdir, "progress.csv")))
             trial_dfs[checkpoint["trial_id"]] = pd.read_csv(progress)
         return trial_dfs
@@ -113,6 +114,7 @@ class ExperimentAnalysis(object):
         for checkpoint in self._checkpoints:
             if checkpoint["trial_id"] == trial_id:
                 logdir = checkpoint["logdir"]
+                logdir = logdir.replace('[', '[[]')
                 progress = max(glob.glob(os.path.join(logdir, "progress.csv")))
                 return pd.read_csv(progress)
         raise ValueError("Trial id {} not found".format(trial_id))
