@@ -29,15 +29,16 @@ class WeizmannDataset(MultiseqDataset):
             len([f for f in os.listdir(data_dir) if f[-3:] == 'npy']) == 0):
             download_weizmann(dest=data_dir)
         super(WeizmannDataset, self).__init__(
-            modalities=['video'], dirs=data_dir, regex="(\w+)_(\w+)\.npy",
+            modalities=['video', 'mask'], dirs=data_dir,
+            regex=["([^_\W]+)_([^_\W]+)\.npy", "([^_\W]+)_([^_\W]+)_mask\.npy"],
             preprocess=None, rates=25, base_rate=base_rate, truncate=False,
             ids_as_mods=['person', 'action'], item_as_dict=item_as_dict)
 
 def download_weizmann(dest='./weizmann'):
-    """Downloads and preprocesses Weizmann human action dataset."""    
+    """Downloads and preprocesses Weizmann human action dataset."""
     src_url = ('http://www.wisdom.weizmann.ac.il/~vision/' +
                'VideoAnalysis/Demos/SpaceTimeActions/DB/')
-    
+
     if sys.version_info[0] == 2:
         from urllib import urlretrieve
     else:
@@ -58,9 +59,17 @@ def download_weizmann(dest='./weizmann'):
                      '-vf': 'crop=128:128:26:8'}
 
     import zipfile
+    import scipy.io
     import skvideo.io
     if not os.path.exists(dest):
         os.mkdir(dest)
+
+    # Download masks / silhouettes
+    download('classification_masks.mat', sources=src_url, dest=dest)
+    masks = scipy.io.loadmat(os.path.join(dest, 'classification_masks.mat'))
+    masks = masks['original_masks'][0,0]
+
+    # Download videos for each action
     for act in actions:
         zip_path = os.path.join(dest, act + '.zip')
         if not os.path.exists(zip_path):
@@ -70,6 +79,7 @@ def download_weizmann(dest='./weizmann'):
             print("Extracting '{}' videos... ({} files)".\
                   format(act, len(vid_names)))
             f.extractall(dest, members=vid_names)
+        os.remove(zip_path)
         for vn in vid_names:
             # Remove extension
             vn_no_ext = vn[:-4]
@@ -79,14 +89,18 @@ def download_weizmann(dest='./weizmann'):
             print("Converting {} to NPY...".format(vn))
             vid_path = os.path.join(dest, vn)
             vid_data = skvideo.io.vread(vid_path, outputdict=ffmpeg_params)
-            vid_data = preprocess(vid_data)
+            vid_data = preprocess_video(vid_data)
             # Rename original of duplicate pairs ('lena_walk1'->'lena_walk')
             if vn_no_ext[:-1] in duplicates:
                 vn_no_ext = vn_no_ext[:-1]
             npy_path = os.path.join(dest, vn_no_ext + '.npy')
             np.save(npy_path, vid_data)
+            print("Saving masks for {} to NPY...".format(vn))
+            mask_data = preprocess_mask(masks[vn])
+            npy_path = os.path.join(dest, vn_no_ext + '_mask.npy')
+            np.save(npy_path, vid_data)
 
-def preprocess(video):
+def preprocess_video(video):
     """Crop, normalize to [0,1] and swap dimensions."""
     height, width = video.shape[1:3]
     side = min(height, width)
@@ -99,7 +113,19 @@ def preprocess(video):
     # Scale from [0, 255] to [0, 1]
     video = video / 255.0
     return video
-            
+
+def preprocess_mask(mask):
+    """Crop, normalize and swap dimensions."""
+    height, width = mask.shape[0:2]
+    side = min(height, width)
+    x0 = (width - side)//2
+    y0 = (height - side)//2
+    # Crop to central square, add channels dimension
+    mask = np.array(mask[y0:y0+side, x0:x0+side, :, np.newaxis])
+    # Transpose to (time, channels, rows, cols)
+    mask = np.transpose(mask, (2,3,0,1))
+    return mask
+
 def test_dataset(data_dir='./weizmann', stats=False):
     print("Loading data...")
     dataset = WeizmannDataset(data_dir)
