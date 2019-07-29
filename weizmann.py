@@ -5,6 +5,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os, copy
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -33,7 +34,7 @@ class WeizmannTrainer(trainer.Trainer):
         'modalities' : ['video', 'person', 'action'],
         'batch_size' : 50, 'split' : 25, 'bylen' : True,
         'epochs' : 3000, 'lr' : 5e-4,
-        'rec_mults' : {'video': 1, 'person': 10, 'action': 10},
+        'rec_mults' : {'video': 1, 'mask': 1, 'person': 10, 'action': 10},
         'kld_anneal' : 1500, 'burst_frac' : 0.2,
         'drop_frac' : 0.5, 'start_frac' : 0, 'stop_frac' : 1,
         'eval_metric' : 'rec_loss', 'viz_metric' : 'ssim',
@@ -45,20 +46,26 @@ class WeizmannTrainer(trainer.Trainer):
     
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
-        dims = {'video': (3, 64, 64), 'person': 10, 'action': 10}
+        dims = {'video': (3, 64, 64), 'mask': (1, 64, 64),
+                'person': 10, 'action': 10}
         dists = {'video': 'Bernoulli',
+                 'mask': 'Bernoulli',
                  'person': 'Categorical',
                  'action': 'Categorical'}
         z_dim = args.model_args.get('z_dim', 256)
         h_dim = args.model_args.get('h_dim', 256)
         gauss_out = (args.model != 'MultiDKS')
-        image_encoder = models.common.ImageEncoder(z_dim, gauss_out)
-        image_decoder = models.common.ImageDecoder(z_dim)
+        encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out),
+                    'mask': models.common.ImageEncoder(z_dim, gauss_out,
+                                                       n_channels=1)}
+        decoders = {'video': models.common.ImageDecoder(z_dim),
+                    'mask': models.common.ImageDecoder(z_dim, n_channels=1)}
+        custom_mods = [m for m in ['video', 'mask'] if m in args.modalities]
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],
                             dists=[dists[m] for m in args.modalities],
-                            encoders={'video': image_encoder},
-                            decoders={'video': image_decoder},
+                            encoders={m: encoders[m] for m in custom_mods},
+                            decoders={m: decoders[m] for m in custom_mods},
                             z_dim=z_dim, h_dim=h_dim,
                             device=args.device, **args.model_args)
         return model
@@ -110,12 +117,24 @@ class WeizmannTrainer(trainer.Trainer):
         ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
         ssim = ssim.view(t_max, b_dim)
 
+        # Compute mask mean squared error and SSIM for each timestep
+        if 'mask' in recon:
+            rec_mask, tgt_mask = recon['mask'][0], targets['mask']
+            m_mse = ((rec_mask - tgt_mask).pow(2) / rec_mask[0,0].numel())
+            m_mse = m_mse.sum(dim=range(2, m_mse.dim()))
+            m_ssim = eval_ssim(rec_mask.flatten(0, 1),
+                               tgt_mask.flatten(0, 1))
+            m_ssim = m_ssim.view(t_max, b_dim)
+        
         # Average across timesteps, for each sequence
         def time_avg(val):
             val[1 - mask.squeeze(-1)] = 0.0
             return val.sum(dim = 0) / lengths
         metrics['mse'] = time_avg(mse)[order].tolist()
         metrics['ssim'] = time_avg(ssim)[order].tolist()
+        if 'mask' in recon:
+            metrics['m_mse'] = time_avg(m_mse)[order].tolist()
+            metrics['m_ssim'] = time_avg(m_ssim)[order].tolist()
 
         # Compute prediction accuracy over time for action and person labels
         def time_acc(probs, targets):
@@ -132,7 +151,7 @@ class WeizmannTrainer(trainer.Trainer):
 
     def summarize_metrics(self, metrics, n_timesteps):
         """Summarize and print metrics across dataset."""
-        summary = dict()
+        summary = defaultdict(lambda : float('nan'))
         for key, val in metrics.items():
             if type(val) is list:
                 # Compute mean and std dev. of metric over sequences
@@ -143,9 +162,12 @@ class WeizmannTrainer(trainer.Trainer):
                 summary[key] = val / n_timesteps
         print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
               format(summary['kld_loss'], summary['rec_loss']))
-        print('\t\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
+        print('\tVideo\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
               format(summary['mse'], summary['mse_std'],
                      summary['ssim'], summary['ssim_std']))
+        print('\tMask\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
+              format(summary['m_mse'], summary['m_mse_std'],
+                     summary['m_ssim'], summary['m_ssim_std']))
         print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
               format(summary['action'], summary['action_std'],
                      summary['person'], summary['person_std']))
@@ -273,7 +295,8 @@ class WeizmannTrainer(trainer.Trainer):
 
         # Helper functions
         def preprocess(frame):
-            return cv.cvtColor((frame * 255).astype('uint8'), cv.COLOR_RGB2BGR)
+            return cv.cvtColor((frame * 255).astype('uint8'),
+                               cv.COLOR_RGB2BGR)
         def add_label(image, text, pos):
             cv.putText(image, text, pos, cv.FONT_HERSHEY_SIMPLEX,
                        0.4, (255, 255, 255), 1, cv.LINE_AA)
