@@ -30,7 +30,8 @@ class WeizmannDataset(MultiseqDataset):
             download_weizmann(dest=data_dir)
         super(WeizmannDataset, self).__init__(
             modalities=['video', 'mask'], dirs=data_dir,
-            regex=["([^_\W]+)_([^_\W]+)\.npy", "([^_\W]+)_([^_\W]+)_mask\.npy"],
+            regex=["([^_\W]+)_([^_\W]+)\.npy",
+                   "([^_\W]+)_([^_\W]+)_mask\.npy"],
             preprocess=None, rates=25, base_rate=base_rate, truncate=False,
             ids_as_mods=['person', 'action'], item_as_dict=item_as_dict)
 
@@ -39,7 +40,8 @@ def download_weizmann(dest='./weizmann'):
     src_url = ('http://www.wisdom.weizmann.ac.il/~vision/' +
                'VideoAnalysis/Demos/SpaceTimeActions/DB/')
 
-    import requests
+    import requests, zipfile
+    import scipy.io, skvideo.io
     from tqdm import tqdm
 
     def progress(count, blockSize, totalSize):
@@ -59,7 +61,7 @@ def download_weizmann(dest='./weizmann'):
                 resp = requests.get(url, headers=headers, stream=True)
                 total_size = resp.headers.get('content-length', None)
                 total = int(total_size)//1024 if total_size else None
-                for data in tqdm(iterable=resp.iter_content(chunk_size=1024),
+                for data in tqdm(iterable=resp.iter_content(chunk_size=512),
                                  total=total, unit='KB'):
                     f.write(data)
         except requests.exceptions.RequestException:
@@ -70,13 +72,9 @@ def download_weizmann(dest='./weizmann'):
     ffmpeg_params = {'-s': '64x64',
                      '-vf': 'crop=128:128:26:8'}
 
-    import zipfile
-    import scipy.io
-    import skvideo.io
+    # Download masks / silhouettes
     if not os.path.exists(dest):
         os.mkdir(dest)
-
-    # Download masks / silhouettes
     if not os.path.exists(os.path.join(dest, 'classification_masks.mat')):
         download('classification_masks.mat', source=src_url, dest=dest)
     masks = scipy.io.loadmat(os.path.join(dest, 'classification_masks.mat'))
@@ -128,14 +126,20 @@ def preprocess_video(video):
 
 def preprocess_mask(mask):
     """Crop, normalize and swap dimensions."""
+    import skimage.transform
     height, width = mask.shape[0:2]
     side = min(height, width)
     x0 = (width - side)//2
     y0 = (height - side)//2
-    # Crop to central square, add channels dimension
-    mask = np.array(mask[y0:y0+side, x0:x0+side, :, np.newaxis])
-    # Transpose to (time, channels, rows, cols)
-    mask = np.transpose(mask, (2,3,0,1))
+    # Crop to central square
+    mask = np.array(mask[y0:y0+side, x0:x0+side, :])
+    # Transpose to (time, rows, cols)
+    mask = np.transpose(mask, (2,0,1))
+    # Resize to 64 by 64
+    mask = np.stack([skimage.transform.resize(mask[t], (64, 64))
+                     for t in range(mask.shape[0])], axis=0)
+    # Add channels dimension
+    mask = mask[:, np.newaxis, :, :]
     return mask
 
 def test_dataset(data_dir='./weizmann', stats=False):
