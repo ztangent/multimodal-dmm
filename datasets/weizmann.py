@@ -39,10 +39,8 @@ def download_weizmann(dest='./weizmann'):
     src_url = ('http://www.wisdom.weizmann.ac.il/~vision/' +
                'VideoAnalysis/Demos/SpaceTimeActions/DB/')
 
-    if sys.version_info[0] == 2:
-        from urllib import urlretrieve
-    else:
-        from urllib.request import urlretrieve
+    import requests
+    from tqdm import tqdm
 
     def progress(count, blockSize, totalSize):
         percent = int(count*blockSize*100/totalSize)
@@ -51,9 +49,23 @@ def download_weizmann(dest='./weizmann'):
 
     def download(filename, source, dest):
         print("Downloading '{}'...".format(filename))
-        urlretrieve(source + filename, os.path.join(dest, filename),
-                    reporthook=progress)
-
+        url = source + filename
+        try:
+            with open(os.path.join(dest, filename), 'ab') as f:
+                headers = {}
+                pos = f.tell()
+                if pos:
+                    headers['Range'] = 'bytes={}-'.format(pos)
+                resp = requests.get(url, headers=headers, stream=True)
+                total_size = resp.headers.get('content-length', None)
+                total = int(total_size)//1024 if total_size else None
+                for data in tqdm(iterable=resp.iter_content(chunk_size=1024),
+                                 total=total, unit='KB'):
+                    f.write(data)
+        except requests.exceptions.RequestException:
+            print("\nError downloading, attempting to resume...")
+            download(filename, source, dest)
+            
     # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
     ffmpeg_params = {'-s': '64x64',
                      '-vf': 'crop=128:128:26:8'}
@@ -65,7 +77,8 @@ def download_weizmann(dest='./weizmann'):
         os.mkdir(dest)
 
     # Download masks / silhouettes
-    download('classification_masks.mat', sources=src_url, dest=dest)
+    if not os.path.exists(os.path.join(dest, 'classification_masks.mat')):
+        download('classification_masks.mat', source=src_url, dest=dest)
     masks = scipy.io.loadmat(os.path.join(dest, 'classification_masks.mat'))
     masks = masks['original_masks'][0,0]
 
@@ -79,7 +92,6 @@ def download_weizmann(dest='./weizmann'):
             print("Extracting '{}' videos... ({} files)".\
                   format(act, len(vid_names)))
             f.extractall(dest, members=vid_names)
-        os.remove(zip_path)
         for vn in vid_names:
             # Remove extension
             vn_no_ext = vn[:-4]
@@ -90,15 +102,15 @@ def download_weizmann(dest='./weizmann'):
             vid_path = os.path.join(dest, vn)
             vid_data = skvideo.io.vread(vid_path, outputdict=ffmpeg_params)
             vid_data = preprocess_video(vid_data)
+            mask_data = preprocess_mask(masks[vn_no_ext])
             # Rename original of duplicate pairs ('lena_walk1'->'lena_walk')
             if vn_no_ext[:-1] in duplicates:
                 vn_no_ext = vn_no_ext[:-1]
             npy_path = os.path.join(dest, vn_no_ext + '.npy')
             np.save(npy_path, vid_data)
             print("Saving masks for {} to NPY...".format(vn))
-            mask_data = preprocess_mask(masks[vn])
             npy_path = os.path.join(dest, vn_no_ext + '_mask.npy')
-            np.save(npy_path, vid_data)
+            np.save(npy_path, mask_data)
 
 def preprocess_video(video):
     """Crop, normalize to [0,1] and swap dimensions."""
@@ -142,9 +154,11 @@ def test_dataset(data_dir='./weizmann', stats=False):
     print("Checking through data for mismatched sequence lengths...")
     for i, data in enumerate(dataset):
         print("Sequence: ", dataset.seq_ids[i])
-        video, person, action = data
-        print(video.shape, person.shape, action.shape)
-        if len(video) != len(person) or len(video) != len(action):
+        video, mask, person, action = data
+        print(video.shape, mask.shape, person.shape, action.shape)
+        if (len(video) != len(person) or
+            len(video) != len(action) or
+            len(video) != len(mask)):
             print("WARNING: Mismatched sequence lengths.")
     if stats:
         print("Statistics:")
