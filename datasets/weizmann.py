@@ -132,7 +132,7 @@ def preprocess_mask(mask):
     x0 = (width - side)//2
     y0 = (height - side)//2
     # Crop to central square, convert to float
-    mask = np.array(mask[y0:y0+side, x0:x0+side, :], dtype=np.float64)
+    mask = np.array(mask[y0:y0+side, x0:x0+side, :]).astype(np.float64)
     # Transpose to (time, rows, cols)
     mask = np.transpose(mask, (2,0,1))
     # Resize to 64 by 64

@@ -22,6 +22,10 @@ class WeizmannTrainer(trainer.Trainer):
 
     parser = copy.copy(trainer.Trainer.parser)
 
+    # Add these arguments specifically for the Weizmann dataset
+    parser.add_argument('--viz_mod', type=str, default='video', metavar='M',
+                        help='image modality to visualize')
+    
     # Rewrite split help function to be more clear
     for action in parser._actions:
         if action.dest != 'split':
@@ -179,13 +183,16 @@ class WeizmannTrainer(trainer.Trainer):
         observed = results['inputs']
         predicted = results['recon']
 
+        # Get image modality to visualize
+        viz_mod = 'video' if not hasattr(args, 'viz_mod') else args.viz_mod 
+        
         # Select best and worst predictions
         sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
                                   np.argsort(metric)[:1]))
         sel_metric = [metric[i] for i in sel_idx]
-        sel_true = [reference['video'][i] for i in sel_idx]
-        sel_obsv = [observed['video'][i] for i in sel_idx]
-        sel_pred = [predicted['video'][i][:,0] for i in sel_idx]
+        sel_true = [reference[viz_mod][i] for i in sel_idx]
+        sel_obsv = [observed[viz_mod][i] for i in sel_idx]
+        sel_pred = [predicted[viz_mod][i][:,0] for i in sel_idx]
 
         sel_true_act = [reference['action'][i] for i in sel_idx]
         sel_obsv_act = [observed['action'][i] for i in sel_idx]
@@ -206,9 +213,11 @@ class WeizmannTrainer(trainer.Trainer):
 
         # Helper function to stitch video snapshots into storyboard
         def stitch(video, times):
+            nc = video.shape[1]
             board = [np.hstack([video[t].transpose(1, 2, 0),
-                                np.ones(shape=(64, 1, 3))]) for t in times]
-            return np.hstack(board)
+                                np.ones(shape=(64, 1, nc))]) for t in times]
+            board = np.squeeze(np.hstack(board))
+            return board
 
         # Helper function to plot a storyboard on current axis
         def plot_board(board, tick_labels, y_label):
