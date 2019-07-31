@@ -10,6 +10,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import cv2 as cv
+import matplotlib
 import matplotlib.pyplot as plt
 
 from datasets import weizmann
@@ -224,7 +225,10 @@ class WeizmannTrainer(trainer.Trainer):
             plt.cla()
             plt.xticks(np.arange(32, 65 * len(tick_labels), 65), tick_labels)
             plt.yticks([])
-            plt.imshow(board)
+            if board.ndim == 2:
+                plt.imshow(board, cmap='gray')
+            else:
+                plt.imshow(board)
             plt.ylabel(y_label)
             plt.gca().tick_params(length=0)
 
