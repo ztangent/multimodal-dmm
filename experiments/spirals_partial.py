@@ -103,7 +103,7 @@ def analyze(args):
         print("Trial:", trial['experiment_tag'])
         try:
             trial_df = ea.trial_dataframe(trial['trial_id'])
-        except(pd.errors.EmptyDataError):
+        except(ValueError, pd.errors.EmptyDataError):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:uniform']

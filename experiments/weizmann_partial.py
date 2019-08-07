@@ -109,7 +109,7 @@ def analyze(args):
         print("Trial:", trial['experiment_tag'])
         try:
             trial_df = ea.trial_dataframe(trial['trial_id'])
-        except(pd.errors.EmptyDataError):
+        except(ValueError, pd.errors.EmptyDataError):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:uniform']
@@ -127,10 +127,13 @@ def analyze(args):
         best_results['ssim'].append(best_ssim)
         best_results['action'].append(best_act_acc)
 
-    # Compute average of the best 3 losses per deletion fraction
+    # Compute average of the best losses per deletion fraction
     best_results = pd.DataFrame(best_results).sort_values(by='del_frac')
-    best_idx = best_results.groupby('del_frac')['loss'].idxmin()
-    best_results = best_results.loc[best_idx]
+    best_std = best_results.groupby('del_frac').std()
+    best_results = best_results.groupby('del_frac').mean()
+    print('--Std--')
+    print(best_std)
+    print('--Mean--')
     print(best_results)
 
     # Save results to CSV file
@@ -141,4 +144,3 @@ if __name__ == "__main__":
     if not args.analyze:
         run(args)
     analyze(args)
-

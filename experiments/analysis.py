@@ -114,6 +114,8 @@ class ExperimentAnalysis(object):
         for checkpoint in self._checkpoints:
             if checkpoint["trial_id"] == trial_id:
                 logdir = checkpoint["logdir"]
+                if logdir is None:
+                    raise ValueError("No log for trial {}".format(trial_id))
                 logdir = logdir.replace('[', '[[]')
                 progress = max(glob.glob(os.path.join(logdir, "progress.csv")))
                 return pd.read_csv(progress)

@@ -104,7 +104,7 @@ def analyze(args):
         print("Trial:", trial['experiment_tag'])
         try:
             trial_df = ea.trial_dataframe(trial['trial_id'])
-        except(pd.errors.EmptyDataError):
+        except(ValueError, pd.errors.EmptyDataError):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:semi']
@@ -121,8 +121,8 @@ def analyze(args):
     print("del_frac\tloss")
     del_fracs = sorted(losses.keys())
     for del_frac in del_fracs:
-        best_losses = sorted(losses[del_frac])[:3]
-        losses[del_frac] = sum(best_losses) / 3
+        best_losses = sorted(losses[del_frac])[:1]
+        losses[del_frac] = sum(best_losses) / 1
         print("{}\t\t{:0.3f}".format(del_frac, losses[del_frac]))
 
     # Save losses to CSV file
