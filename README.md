@@ -6,13 +6,12 @@ Generalizes the Multimodal Variational Auto-Encoder (MVAE) by [Wu & Goodman](htt
 
 ## Setup
 
-After creating a virtual environment with `virtualenv` or `conda`, one can simply install the dependencies in `requirements.txt`. (Code is currently written for Python 2.7, but should be almost entirely forward compatible with Python 3.)
+After creating a virtual environment with `virtualenv` or `conda`, one can simply install the dependencies in `requirements.txt`. (Currently written in Python 2.7, but should be almost entirely compatible with Python 3.)
 
 ```
 virtualenv -p python2 venv
 source venv/bin/activate
 pip install -r requirements.txt
-
 ```
 
 Alternatively, one can install the following packages directly through `pip`:
@@ -33,7 +32,9 @@ Before training, the datasets need to be generated or downloaded.
 
 To generate the Spirals dataset, make `datasets` the current directory, then run `python spirals.py`. For a list of options, run `python spirals.py -h`.  
 
-To automatically download and preprocess the Weizmann video dataset of human actions, again make sure that `datasets` is the current directory, then run `python weizmann.py`. If automated download fails, create a directory called `weizmann` in `datasets`, and download the zip files and segmentation masks from the [[Weizmann dataset website](http://www.wisdom.weizmann.ac.il/~vision/SpaceTimeActions.html).
+To automatically download and preprocess the Weizmann video dataset of human actions, again make sure that `datasets` is the current directory, then run `python weizmann.py`.
+
+If automated download fails, create a directory called `weizmann` in `datasets`, and download the zip files and segmentation masks from the [Weizmann dataset website](http://www.wisdom.weizmann.ac.il/~vision/SpaceTimeActions.html).
 
 ## Models and Inference Methods
 
@@ -43,7 +44,7 @@ The `models` subdirectory contains three different inference methods that can be
 
 - `dks.py` implements the MDMM with the RNN-based structured inference networks described by [Krishnan et al](https://www.aaai.org/ocs/index.php/AAAI/AAAI17/paper/view/14215). By providing different options to the constructor, one can use either forward or backward RNN networks, and toggle different methods for handling missing data. Refer to the docstrings for details.
 
-- `vrnn.py' implements a multimodal version of the Variational Recurrent Neural Network (VRNN) described by [Chung et al](https://papers.nips.cc/paper/5653-a-recurrent-latent-variable-model-for-sequential-data). This is similar to using `dks.py` with a forward RNN. (Not recently tested to work.)
+- `vrnn.py` implements a multimodal version of the Variational Recurrent Neural Network (VRNN) described by [Chung et al](https://papers.nips.cc/paper/5653-a-recurrent-latent-variable-model-for-sequential-data). This is similar to using `dks.py` with a forward RNN. (Not recently tested to work.)
 
 ## Training
 
@@ -57,7 +58,7 @@ Again, default hyper-parameters are used, run `python weizmann.py -h` for a full
 
 To specify which inference method to use, use the `--model` flag with either `dmm` or `dks`. To specify which modalities to load and train on, use the `--modalities` flag. To visualize predictions while training, add the `--visualize` flag. Pretrained models can be evaluated by adding `--load PATH/TO/MODEL`.
 
-An abstract `Trainer' class can be found in `trainer.py`, allowing training code to easily written for other multimodal sequential datasets.
+An abstract `Trainer` class can be found in `trainer.py`, allowing training code to easily written for other multimodal sequential datasets.
 
 ## Experiments
 
