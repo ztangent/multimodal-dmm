@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser(formatter_class=
                                  argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--analyze', action='store_true', default=False,
                     help='analyze without running experiments')
-parser.add_argument('--n_repeats', type=int, default=5, metavar='N',
+parser.add_argument('--n_repeats', type=int, default=10, metavar='N',
                     help='number of repetitions per config set')
 parser.add_argument('--trial_cpus', type=int, default=1, metavar='N',
                     help='number of CPUs per trial')
@@ -58,13 +58,13 @@ def run(args):
         # Set low learning rate to prevent NaNs
         "lr": 5e-4,
         # Evaluate reconstruction loss only for images and action labels
-        "eval_mods": ['video', 'action'],
+        "eval_mods": ['video', 'mask', 'action'],
         # Do not provide action or person labels for test set
-        "drop_mods": ['action', 'person'],
+        "drop_mods": ['mask', 'action', 'person'],
         # Repeat each configuration with different random seeds
         "seed": tune.grid_search(range(args.n_repeats)),
         # Iterate over uniform data deletion in 10% steps
-        "corrupt": tune.grid_search([{'uniform': i/5} for i in range(5)])
+        "corrupt": tune.grid_search([{'uniform': i/10} for i in range(10)])
     }
 
     # Set up model and eval args
@@ -127,17 +127,18 @@ def analyze(args):
         best_results['ssim'].append(best_ssim)
         best_results['action'].append(best_act_acc)
 
-    # Compute average of the best losses per deletion fraction
+    # Compute average of the best 3 runs per deletion fraction
     best_results = pd.DataFrame(best_results).sort_values(by='del_frac')
-    best_std = best_results.groupby('del_frac').std()
-    best_results = best_results.groupby('del_frac').mean()
+    best_results = best_results.groupby('del_frac').nsmallest(3)
+    best_std = best_results.std()
+    best_mean = best_results.mean()
     print('--Std--')
     print(best_std)
     print('--Mean--')
-    print(best_results)
+    print(best_mean)
 
     # Save results to CSV file
-    best_results.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
+    best_mean.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
         
 if __name__ == "__main__":
     args = parser.parse_args()

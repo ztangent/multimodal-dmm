@@ -20,7 +20,7 @@ opencv-python==4.1.0.25
 pandas==0.24.2
 Pillow==6.1.0
 pycrypto==2.6.1
-pygobject==3.26.1
+pygobject==3.32.2
 pyparsing==2.4.1.1
 python-dateutil==2.8.0
 pytz==2019.1

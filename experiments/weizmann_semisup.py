@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser(formatter_class=
                                  argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--analyze', action='store_true', default=False,
                     help='analyze without running experiments')
-parser.add_argument('--n_repeats', type=int, default=5, metavar='N',
+parser.add_argument('--n_repeats', type=int, default=10, metavar='N',
                     help='number of repetitions per config set')
 parser.add_argument('--trial_cpus', type=int, default=1, metavar='N',
                     help='number of CPUs per trial')
@@ -57,15 +57,17 @@ def run(args):
 	"save_freq": 300,
         # Set low learning rate to prevent NaNs
         "lr": 5e-4,
+        # Only train on videos and actions
+        "modalities": ['video', 'action'],
         # Evaluate reconstruction loss only for images and action labels
         "eval_mods": ['video', 'action'],
         # Do not provide action or person labels for test set
         "drop_mods": ['action', 'person'],
         # Repeat each configuration with different random seeds
         "seed": tune.grid_search(range(args.n_repeats)),
-        # Delete action labels in 20% steps
-        "corrupt": tune.grid_search([{'semi': i/5, 'modalities': ['action']}
-                                     for i in range(5)])
+        # Delete action labels in 10% steps
+        "corrupt": tune.grid_search([{'semi': i/10, 'modalities': ['action']}
+                                     for i in range(10)])
     }
 
     # Set up model and eval args
@@ -114,7 +116,7 @@ def analyze(args):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:semi']
-        best_idx = trial_df.mean_loss.idxmin()
+        best_idx = trial_df.mean_loss.idxmin() 
         best_loss, best_ssim, best_act_acc =\
             trial_df[['mean_loss', 'ssim', 'action']].iloc[best_idx]
         print("Best loss:", best_loss)
@@ -128,17 +130,18 @@ def analyze(args):
         best_results['ssim'].append(best_ssim)
         best_results['action'].append(best_act_acc)
 
-    # Compute average of the best 3 losses per deletion fraction
+    # Compute average of the best 3 runs per deletion fraction
     best_results = pd.DataFrame(best_results).sort_values(by='del_frac')
-    best_std = best_results.groupby('del_frac').std()
-    best_results = best_results.groupby('del_frac').mean()
+    best_results = best_results.groupby('del_frac').nsmallest(3)
+    best_std = best_results.std()
+    best_mean = best_results.mean()
     print('--Std--')
     print(best_std)
     print('--Mean--')
-    print(best_results)
+    print(best_mean)
 
     # Save results to CSV file
-    best_results.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
+    best_mean.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
         
 if __name__ == "__main__":
     args = parser.parse_args()
