@@ -17,13 +17,14 @@ pip install -r requirements.txt
 Alternatively, one can install the following packages directly through `pip`:
 ```
 # For basic functionality
-pip install pytorch pandas pyyaml matplotlib
+pip install torch pandas pyyaml matplotlib
 
 # To download and pre-process the Weizmann video dataset
-pip install scipy scikit-video scikit-image requests
+sudo apt-get install ffmpeg
+pip install scipy scikit-video scikit-image requests tqdm opencv-python
 
 # To run the experiment scripts using Ray Tune
-pip install ray
+pip install ray psutil
 ```
 
 ## Datasets
@@ -67,20 +68,20 @@ Ray Tune can be used to easily run experiments across multiple sets of hyper-par
 ### Learning with uniformly random missing data
 
 For the Spirals dataset:
-```python -m experiments/spirals_partial --method [bfvi|...]```
+```python -m experiments/spirals_partial --method [bfvi|...] --trial_cpus N --trial_gpus N```
 
 For the Weizmann dataset:
-```python -m experiments/weizmann_partial --method [bfvi|...]```
+```python -m experiments/weizmann_partial --method [bfvi|...] --trial_cpus N --trial_gpus N```
 
 ### Semi-supervised learning
 
 Semi-supervised learning refers to learning where some sequences have entire modalities removed.
 
 For the Spirals dataset:
-```python -m experiments/spirals_semisup --method [bfvi|...]```
+```python -m experiments/spirals_semisup --method [bfvi|...] --trial_cpus N --trial_gpus N```
 
 For the Weizmann dataset:
-```python -m experiments/weizmann_semisup --method [bfvi|...]```
+```python -m experiments/weizmann_semisup --method [bfvi|...] --trial_cpus N --trial_gpus N```
 
 ## Examples
 
