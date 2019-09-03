@@ -44,11 +44,6 @@ def download_weizmann(dest='./weizmann'):
     import scipy.io, skvideo.io
     from tqdm import tqdm
 
-    def progress(count, blockSize, totalSize):
-        percent = int(count*blockSize*100/totalSize)
-        sys.stdout.write("\rProgress: {:2d}%".format(percent))
-        sys.stdout.flush()
-
     def download(filename, source, dest):
         print("Downloading '{}'...".format(filename))
         url = source + filename
