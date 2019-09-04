@@ -5,13 +5,13 @@ from __future__ import absolute_import
 import os, sys
 
 import numpy as np
-from PIL import Image
 
 if __name__ == '__main__':
     from multiseq import MultiseqDataset, seq_collate
 else:
     from .multiseq import MultiseqDataset, seq_collate
 
+fps = 25.0    
 subjects = [
     'fadg0', 'faks0', 'fcft0', 'fcmh0', 'fcmr0', 'fcrh0', 'fdac1', 'fdms0',
     'fdrd1', 'fedw0', 'felc0', 'fgjd0', 'fjas0', 'fjem0', 'fjre0', 'fjwb0',
@@ -39,6 +39,8 @@ def download_vidTIMIT(dest='./vidTIMIT'):
     
     import requests, zipfile
     from tqdm import tqdm
+    import PIL.Image, skimage.transform
+    import scipy.io.wavfile, scipy.signal
 
     def download(filename, source, dest):
         print("Downloading '{}'...".format(filename))
@@ -59,54 +61,74 @@ def download_vidTIMIT(dest='./vidTIMIT'):
             print("\nError downloading, attempting to resume...")
             download(filename, source, dest)
 
-    # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
-    ffmpeg_params = {'-s': '64x64',
-                     '-vf': 'crop=128:128:26:8'}
+    def img_dir_to_npy(path):
+        fnames = sorted(os.listdir(path))
+        npy = np.array([np.array(PIL.Image.open(os.path.join(path, fname)))
+                        for fname in fnames])
+        return npy
 
+    def preprocess_video(video):
+        """Crop, normalize to [0,1] and swap dimensions."""
+        height, width = video.shape[1:3]
+        side = min(height, width)
+        x0 = (width - side)//2
+        y0 = (height - side)//2
+        # Crop to central square
+        video = np.array(video[:, y0:y0+side, x0:x0+side])
+        # Resize to 64 by 64 and normalize to [0, 1]
+        video = np.stack([skimage.transform.resize(video[t], (64, 64, 3))
+                         for t in range(video.shape[0])], axis=0)
+        # Transpose to (time, channels, rows, cols)
+        video = np.transpose(video, (0,3,1,2))
+        return video            
+
+    def preprocess_audio(audio, rate):
+        """Convert to spectrogram using 25 windows per second."""
+        win_sz = rate / fps * 2
+        # Perform Short Time Fourier Transform (STFT)
+        f, t, spec = scipy.signal.stft(audio, rate,
+                                       nperseg=win_sz, noverlap=win_sz/2)
+        # Separate and concatenate real and imaginary parts of spectrogram
+        spec = np.concatenate([np.real(spec), np.imag(spec)], axis=0)
+        # Swap time and frequency axes
+        spec = spec.T
+        return spec
+    
     if not os.path.exists(dest):
         os.mkdir(dest)
     for subj in subjects:
         subj_path = os.path.join(dest, subj)
-        zip_path = subj_path + '.zip'
+
         # Download and extract videos
+        zip_path = subj_path + '.zip'
         if not os.path.exists(zip_path):
             download(subj + '.zip', source=src_url, dest=dest)
         if not os.path.exists(subj_path):
             with zipfile.ZipFile(zip_path, "r") as f:
                 print("Extracting subject '{}'".format(subj))
                 f.extractall(dest)
+
         # Convert videos to NPY
         vid_subdir = os.path.join(subj_path, 'video')
         for vid_name in os.listdir(vid_subdir):
             vid_path = os.path.join(vid_subdir, vid_name)
+            if not os.path.isdir(vid_path):
+                continue
             print("Converting {} to NPY...".format(vid_path))
             vid_data = img_dir_to_npy(vid_path)
             vid_data = preprocess_video(vid_data)
             npy_path = os.path.join(vid_subdir, vid_name + '.npy')
             np.save(npy_path, vid_data)
 
-def img_dir_to_npy(path):
-    fnames = sorted(os.listdir(path))
-    npy = np.array([np.array(Image.open(os.path.join(path, fname)))
-                    for fname in fnames])
-    return npy
-            
-def preprocess_video(video):
-    """Crop, normalize to [0,1] and swap dimensions."""
-    import skimage.transform
-    height, width = video.shape[1:3]
-    side = min(height, width)
-    x0 = (width - side)//2
-    y0 = (height - side)//2
-    # Crop to central square
-    video = np.array(video[:, y0:y0+side, x0:x0+side])
-    # Resize to 64 by 64
-    video = np.stack([skimage.transform.resize(video[t], (64, 64, 3))
-                     for t in range(video.shape[0])], axis=0)
-    # Transpose to (time, channels, rows, cols)
-    video = np.transpose(video, (0,3,1,2))
-    print(video.shape, video.max(), video.min())
-    return video            
+        # Convert audio waveforms to spectrogram NPY files
+        aud_subdir = os.path.join(subj_path, 'audio')
+        for aud_name in os.listdir(aud_subdir):
+            aud_path = os.path.join(aud_subdir, aud_name)
+            print("Converting {} to NPY...".format(aud_path))
+            rate, aud_data = scipy.io.wavfile.read(aud_path)
+            aud_data = preprocess_audio(aud_data, rate)
+            npy_path = os.path.join(aud_subdir, aud_name[:-3] + 'npy')
+            np.save(npy_path, aud_data)
             
 if __name__ == '__main__':
     import argparse

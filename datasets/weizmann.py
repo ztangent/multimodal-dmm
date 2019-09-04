@@ -11,6 +11,7 @@ if __name__ == '__main__':
 else:
     from .multiseq import MultiseqDataset, seq_collate
 
+fps = 25.0
 persons = ['daria', 'denis', 'eli', 'ido', 'ira',
            'lena', 'lyova', 'moshe', 'shahar']
 actions = ['bend', 'jack', 'jump', 'pjump', 'run',

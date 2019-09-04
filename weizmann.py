@@ -299,7 +299,7 @@ class WeizmannTrainer(trainer.Trainer):
         shape = reference['video'][0].shape[2:4]
         if save_args['comparison']:
             shape = (shape[0]*3, shape[1])
-        fps = 25.0
+        fps = weizmann.fps
 
         # Create video writer for single output file
         if save_args['one_file']:
