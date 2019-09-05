@@ -25,13 +25,20 @@ class VidTIMITDataset(MultiseqDataset):
     """VidTIMIT audio/video/text dataset."""
     def __init__(self, data_dir, base_rate=None, item_as_dict=False):
         # Generate dataset if it doesn't exist yet
+        audio_dir = os.path.join(data_dir, 'audio')
+        video_dir = os.path.join(data_dir, 'video')
         if (not os.path.exists(data_dir) or
-            len([f for f in os.listdir(data_dir) if f[-3:] == 'npy']) == 0):
+            not os.path.exists(audio_dir) or
+            not os.path.exists(video_dir) or
+            len([f for f in os.listdir(audio_dir) if f[-3:] == 'npy']) == 0 or
+            len([f for f in os.listdir(video_dir) if f[-3:] == 'npy']) == 0):
             download_vidTIMIT(dest=data_dir)
-        super(vidTIMITDataset, self).__init__(
-            modalities=['video'], dirs=data_dir, regex="(\w+)_(\w+)\.npy",
-            preprocess=None, rates=25, base_rate=base_rate, truncate=False,
-            ids_as_mods=['person', 'action'], item_as_dict=item_as_dict)
+            
+        super(VidTIMITDataset, self).__init__(
+            modalities=['audio', 'video'], dirs=[audio_dir, video_dir],
+            regex="(\w+)_(\w+)\.npy", preprocess=None,
+            rates=fps, base_rate=base_rate, truncate=True,
+            ids_as_mods=[], item_as_dict=item_as_dict)
 
 def download_vidTIMIT(dest='./vidTIMIT'):
     """Downloads and preprocesses VidTIMIT dataset."""
@@ -93,9 +100,17 @@ def download_vidTIMIT(dest='./vidTIMIT'):
         # Swap time and frequency axes
         spec = spec.T
         return spec
-    
+
+    # Create dataset directories
     if not os.path.exists(dest):
         os.mkdir(dest)
+    vid_dir = os.path.join(dest, 'video')
+    if not os.path.exists(vid_dir):
+        os.mkdir(vid_dir)
+    aud_dir = os.path.join(dest, 'audio')
+    if not os.path.exists(aud_dir):
+        os.mkdir(aud_dir)
+        
     for subj in subjects:
         subj_path = os.path.join(dest, subj)
 
@@ -109,26 +124,67 @@ def download_vidTIMIT(dest='./vidTIMIT'):
                 f.extractall(dest)
 
         # Convert videos to NPY
-        vid_subdir = os.path.join(subj_path, 'video')
-        for vid_name in os.listdir(vid_subdir):
-            vid_path = os.path.join(vid_subdir, vid_name)
+        subj_vid_dir = os.path.join(subj_path, 'video')
+        for vid_name in os.listdir(subj_vid_dir):
+            # Skip non-video items
+            vid_path = os.path.join(subj_vid_dir, vid_name)
             if not os.path.isdir(vid_path):
+                continue
+            # Skip head rotation videos
+            if vid_name[:4] == 'head':
                 continue
             print("Converting {} to NPY...".format(vid_path))
             vid_data = img_dir_to_npy(vid_path)
             vid_data = preprocess_video(vid_data)
-            npy_path = os.path.join(vid_subdir, vid_name + '.npy')
+            # Save in main video directory
+            npy_path = os.path.join(vid_dir, subj + '_' + vid_name + '.npy')
             np.save(npy_path, vid_data)
 
         # Convert audio waveforms to spectrogram NPY files
-        aud_subdir = os.path.join(subj_path, 'audio')
-        for aud_name in os.listdir(aud_subdir):
-            aud_path = os.path.join(aud_subdir, aud_name)
+        subj_aud_dir = os.path.join(subj_path, 'audio')
+        for aud_name in os.listdir(subj_aud_dir):
+            # Skip non-WAV files
+            if aud_name[-4:] != '.wav':
+                continue
+            aud_path = os.path.join(subj_aud_dir, aud_name)
             print("Converting {} to NPY...".format(aud_path))
             rate, aud_data = scipy.io.wavfile.read(aud_path)
             aud_data = preprocess_audio(aud_data, rate)
-            npy_path = os.path.join(aud_subdir, aud_name[:-3] + 'npy')
+            aud_name = aud_name[:-4]
+            # Save in main audio directory
+            npy_path = os.path.join(aud_dir, subj + '_' + aud_name + '.npy')
             np.save(npy_path, aud_data)
+
+def test_dataset(data_dir='./vidTIMIT', stats=False):
+    print("Loading data...")
+    dataset = VidTIMITDataset(data_dir)
+    print("Number of sequences:", len(dataset))
+    print("Sequence ID values:")
+    for s in dataset.seq_id_sets:
+        print(s)
+    print("Testing batch collation...")
+    data = seq_collate([dataset[i] for i in range(min(10, len(dataset)))])
+    print("Batch shapes:")
+    for d in data[:-2]:
+        print(d.shape)
+    print("Sequence lengths: ", data[-1])
+    print("Checking through data for mismatched sequence lengths...")
+    for i, data in enumerate(dataset):
+        print("Sequence: ", dataset.seq_ids[i])
+        audio, video = data
+        print(audio.shape, video.shape)
+        if len(audio) != len(video):
+            print("WARNING: Mismatched sequence lengths.")
+    if stats:
+        print("Statistics:")
+        m_mean, m_std = dataset.mean_and_std()
+        m_max, m_min = dataset.max_and_min()
+        for m in ['audio', 'video']:
+            print("--", m, "--")
+            print("Mean:", m_mean[m])
+            print("Std:", m_std[m])
+            print("Max:", m_max[m])
+            print("Min:", m_min[m])
             
 if __name__ == '__main__':
     import argparse
@@ -138,4 +194,4 @@ if __name__ == '__main__':
     parser.add_argument('--stats', action='store_true', default=False,
                         help='whether to compute and print statistics')
     args = parser.parse_args()
-    download_vidTIMIT(args.data_dir)
+    test_dataset(args.data_dir, args.stats)
