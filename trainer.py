@@ -30,6 +30,8 @@ class Trainer(object):
                         metavar='M', help='data modalities')
     parser.add_argument('--model', type=str, default='dmm', metavar='S',
                         help='name of model to train')
+    parser.add_argument('--method', type=str, default=None, metavar='S',
+                        help='inference method: bfvi, b/f-mask, or b/f-skip')
 
     # Additional model-specific arguments as YAML dicts
     parser.add_argument('--model_args', type=yaml.safe_load,
@@ -152,7 +154,10 @@ class Trainer(object):
         # Convert device string to torch.device
         args.device = (torch.device(args.device) if torch.cuda.is_available()
                        else torch.device('cpu'))
-
+        
+        # Pre-process args
+        args = self.pre_build_args(args)
+        
         # Load model if specified, or test/feature flags are set
         checkpoint = None
         if args.load is not None:
@@ -187,13 +192,13 @@ class Trainer(object):
         # Load model state from checkpoint
         if checkpoint is not None:
             self.model.load_state_dict(checkpoint['model'])
-
-        # Fill in unspecified default arguments
-        args = self.default_args(args)
             
         # Set up optimizer
         self.optimizer = optim.Adam(self.model.parameters(),
                                     lr=args.lr, weight_decay=args.w_decay)
+
+        # Post-process args
+        args = self.post_build_args(args)
         
     def train(self, loader, epoch, args):
         """Train for a single epoch using batched gradient descent."""
@@ -323,8 +328,28 @@ class Trainer(object):
         raise NotImplementedError
         return train_data, test_data
 
-    def default_args(self, args, model):
-        """Fill unspecified args with default values."""
+    def pre_build_args(self, args):
+        """Process args before model is constructed."""
+        # Override model and model_args based on method flag
+        if args.method in ['bfvi', 'b-mask', 'f-mask', 'b-skip', 'f-skip']:
+            print("Setting up '{}' inference method...".format(args.method))
+            print("The --model and --model_args flags will be overwritten.")
+            if args.method == 'bfvi':
+                args.model = 'dmm'
+                if 'flt_particles' not in args.eval_args:
+                    args.eval_args['flt_particles'] = 200
+            else:
+                args.model = 'dks'
+                args.model_args = {
+                    "rnn_skip" : 'skip' in args.method,
+                    "rnn_dir" : 'bwd' if args.method[0] == 'b' else 'fwd'
+                }
+        else:
+            print("Ignoring unknown inference method '{}'".format(args.method))
+        return args
+    
+    def post_build_args(self, args):
+        """Process args after model is constructed."""
         return args
     
     def compute_metrics(self, model, infer, prior, recon,

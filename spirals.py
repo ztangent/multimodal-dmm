@@ -49,8 +49,19 @@ class SpiralsTrainer(trainer.Trainer):
                             device=args.device, **args.model_args)
         return model
 
-    def default_args(self, args):
-        """Fill unspecified args with default values."""
+    def pre_build_args(self, args):
+        """Process args before model is constructed."""
+        args = super(SpiralsTrainer, self).pre_build_args(args)
+        # Set up method specific model and training args
+        if args.method in ['b-skip', 'f-skip', 'b-mask', 'f-mask']:
+            # No direct connection from features to z in encoder
+            args.model_args['feat_to_z'] = False
+            # Do not add unimodal ELBO training loss for RNN methods
+            args.train_args['uni_loss'] = False
+        return args
+    
+    def post_build_args(self, args):
+        """Process args after model is constructed."""
         # Default reconstruction loss multipliers
         if args.rec_mults == 'auto':
             dims = self.model.dims
@@ -82,8 +93,8 @@ class SpiralsTrainer(trainer.Trainer):
                         targets, mask, lengths, order, args):
         """Compute evaluation metrics from batch of inputs and outputs."""    
         metrics = dict()
-        if type(lengths) != torch.tensor:
-            lengths = torch.tensor(lengths).float().to(args.device)
+        if type(lengths) != torch.Tensor:
+            lengths = torch.FloatTensor(lengths).to(args.device)
         # Compute and store KLD and reconstruction losses
         metrics['kld_loss'] = model.kld_loss(infer, prior, mask).item()
         metrics['rec_loss'] = model.rec_loss(targets, recon, mask,

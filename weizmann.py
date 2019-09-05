@@ -75,8 +75,19 @@ class WeizmannTrainer(trainer.Trainer):
                             device=args.device, **args.model_args)
         return model
 
-    def default_args(self, args):
-        """Fill unspecified args with default values."""
+    def pre_build_args(self, args):
+        """Process args before model is constructed."""
+        args = super(WeizmannTrainer, self).pre_build_args(args)
+        # Set up method specific model and training args
+        if args.method in ['b-skip', 'f-skip', 'b-mask', 'f-mask']:
+            # Create direct connection from features to z in encoder
+            args.model_args['feat_to_z'] = True
+            # Use both unimodal and multimodal ELBO training loss
+            args.train_args['uni_loss'] = True
+        return args
+    
+    def post_build_args(self, args):
+        """Process args after model is constructed."""
         # Scale up reconstruction loss depending on how much data is corrupted
         corrupt_mult = 1 / (1 - args.corrupt.get('uniform', 0.0))
         args.rec_mults = {m : args.rec_mults[m] * corrupt_mult
@@ -107,8 +118,8 @@ class WeizmannTrainer(trainer.Trainer):
         """Compute evaluation metrics from batch of inputs and outputs."""    
         metrics = dict()
         t_max, b_dim = max(lengths), len(lengths)
-        if type(lengths) != torch.tensor:
-            lengths = torch.tensor(lengths).float().to(args.device)
+        if type(lengths) != torch.Tensor:
+            lengths = torch.FloatTensor(lengths).float().to(args.device)
 
         # Compute and store KLD and reconstruction losses
         metrics['kld_loss'] = model.kld_loss(infer, prior, mask).item()

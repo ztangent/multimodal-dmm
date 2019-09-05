@@ -32,8 +32,6 @@ parser.add_argument('--exp_name', type=str, default="weizmann_semisup",
                     help='experiment name')
 parser.add_argument('--config', type=yaml.safe_load, default={},
                     help='trial configuration arguments')
-parser.add_argument('--method', type=str, default='bfvi', metavar='S',
-                    help='inference method: bfvi, b/f-mask, or b/f-skip')
 
 def run(args):
     """Runs Ray experiments."""
@@ -69,21 +67,6 @@ def run(args):
         "corrupt": tune.grid_search([{'semi': i/10, 'modalities': ['action']}
                                      for i in range(10)])
     }
-
-    # Set up model and eval args
-    if args.method not in ['bfvi', 'b-mask', 'f-mask', 'b-skip', 'f-skip']:
-        args.method = 'bfvi'
-    if args.method == 'bfvi':
-        config['model'] = 'dmm'
-        config['eval_args'] = {'flt_particles': 200}
-    else:
-        config['model'] = 'dks'
-        config['model_args'] = {
-            "rnn_skip" : 'skip' in args.method,
-            "rnn_dir" : 'bwd' if args.method[0] == 'b' else 'fwd',
-            "feat_to_z" : True
-        }
-        config['train_args'] = {'uni_loss': True}
 
     # Update config with parameters from command line
     config.update(args.config)
