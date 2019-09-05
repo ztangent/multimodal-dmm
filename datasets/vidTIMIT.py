@@ -22,7 +22,7 @@ subjects = [
 ]
 
 class VidTIMITDataset(MultiseqDataset):
-    """VidTIMIT audio/video/text dataset."""
+    """VidTIMIT audio/video dataset."""
     def __init__(self, data_dir, base_rate=None, item_as_dict=False):
         # Generate dataset if it doesn't exist yet
         audio_dir = os.path.join(data_dir, 'audio')
@@ -95,10 +95,15 @@ def download_vidTIMIT(dest='./vidTIMIT'):
         # Perform Short Time Fourier Transform (STFT)
         f, t, spec = scipy.signal.stft(audio, rate,
                                        nperseg=win_sz, noverlap=win_sz/2)
-        # Separate and concatenate real and imaginary parts of spectrogram
-        spec = np.concatenate([np.real(spec), np.imag(spec)], axis=0)
         # Swap time and frequency axes
         spec = spec.T
+        # Stack the windows [T-2, T-1, T, T+1, T+2] as channels for Tth feature
+        overlap = 2
+        n_wins = spec.shape[0]
+        spec = np.pad(spec, [(overlap, overlap), (0, 0)], mode='constant')
+        spec = spec[np.arange(n_wins)[:, None] + np.arange(overlap*2+1)]
+        # Separate and concat real and imaginary parts as channels
+        spec = np.concatenate([np.real(spec), np.imag(spec)], axis=1)
         return spec
 
     # Create dataset directories
