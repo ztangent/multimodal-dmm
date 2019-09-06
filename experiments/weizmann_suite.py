@@ -29,7 +29,7 @@ parser.add_argument('--max_gpus', type=int, default=None, metavar='N',
                     help='max GPUs for all trials')
 parser.add_argument('--local_dir', type=str, default="./",
                 help='path to Ray results')
-parser.add_argument('--exp_name', type=str, default="weizmann_semisup",
+parser.add_argument('--exp_name', type=str, default="weizmann_suite",
                     help='experiment name')
 parser.add_argument('--config', type=yaml.safe_load, default={},
                     help='trial configuration arguments')
