@@ -189,18 +189,18 @@ def evaluate(trial_config, trial_dir):
     base_args = WeizmannTrainer.parser.parse_args([])
     # Override trainer args with trial config
     vars(base_args).update(trial_config)
-    # Set save directory (where best model is stored)
-    base_args.save_dir = os.path.join(trial_dir, base_args.save_dir)
-    # Set test flag so that best model is loaded
-    base_args.test = True
+    # Set load path to best model in original save dir
+    base_args.load = os.path.join(trial_dir, base_args.save_dir, 'best.pth')
 
     # Iterate across inference tasks
     task_train_metrics, task_train_std = {}, {}
     task_test_metrics, task_test_std = {}, {}
     for task in tasks:
-        print("=='{}' inference task==".format(task))
+        print("==Inference Task: '{}'==".format(task))
         args = copy.deepcopy(base_args)
         vars(args).update(task_args[task])
+        # Name save directory after task
+        args.save_dir = os.path.join(trial_dir, task + '_save')
         # Construct trainer and evaluate
         trainer = WeizmannTrainer(args)
         train_metrics, test_metrics = trainer.run_eval(args)
