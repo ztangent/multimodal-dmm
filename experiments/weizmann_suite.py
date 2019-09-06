@@ -96,6 +96,7 @@ def analyze(args):
 
     tasks = ['recon', 'half', 'fwd', 'bwd', 'mask', 'action']
     task_results = {task: [] for task in tasks}
+    task_results['method'] = []
 
     # Iterate across trials
     for i, trial in df.iterrows():
@@ -178,6 +179,8 @@ def evaluate(trial_config, trial_dir):
     vars(base_args).update(trial_config)
     # Set save directory (where best model is stored)
     base_args.save_dir = os.path.join(trial_dir, base_args.save_dir)
+    # Set test flag so that best model is loaded
+    base_args.test = True
 
     # Iterate across inference tasks
     task_train_metrics = {}
