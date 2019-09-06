@@ -194,10 +194,9 @@ def evaluate(trial_config, trial_dir):
     base_args.test = True
 
     # Iterate across inference tasks
-    task_train_metrics = {}
-    task_test_metrics = {}
+    task_train_metrics, task_train_std = {}, {}
+    task_test_metrics, task_test_std = {}, {}
     for task in tasks:
-        print("---")
         print("Running '{}' inference task...".format(task))
         print("---")
         args = copy.deepcopy(base_args)
