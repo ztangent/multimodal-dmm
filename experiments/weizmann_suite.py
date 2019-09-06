@@ -96,11 +96,15 @@ def analyze(args):
 
     tasks = ['recon', 'half', 'fwd', 'bwd', 'mask', 'action']
     task_results = {task: [] for task in tasks}
+    task_results_std = {task: [] for task in tasks}
     task_results['method'] = []
+    task_results_std['method'] = []
 
     # Iterate across trials
     for i, trial in df.iterrows():
+        print('===')
         print("Trial:", trial['experiment_tag'])
+        print('===')
         try:
             trial_df = ea.trial_dataframe(trial['trial_id'])
         except(ValueError, pd.errors.EmptyDataError):
@@ -127,24 +131,31 @@ def analyze(args):
         trial_dir = os.path.join(exp_dir, trial_dir)
 
         # Run evaluation suite on best saved model
-        _, trial_task_metrics = evaluate(trial_config, trial_dir)
+        _, _, task_metrics, task_std = evaluate(trial_config, trial_dir)
         task_results['method'].append(method)
         for task in tasks:
-            task_results[task].append(trial_task_metrics[task])
+            task_results[task].append(task_metrics[task])
+            task_results_std[task].append(task_std[task])
 
     # Print run results for each method
     run_results = pd.DataFrame(run_results)
-    run_results.set_index('method')
+    run_results.set_index('method', inplace=True)
     print(run_results)
 
     # Print task results for each method
     task_results = pd.DataFrame(task_results)
-    task_results.set_index('method')
+    task_results.set_index('method', inplace=True)
     print(task_results)
+
+    # Print task standard deviations for each method
+    task_results_std = pd.DataFrame(task_results_std)
+    task_results_std.set_index('method', inplace=True)
+    print(task_results_std)
 
     # Save results to CSV file
     run_results.to_csv(os.path.join(exp_dir, 'run_results.csv'))
     task_results.to_csv(os.path.join(exp_dir, 'task_results.csv'))
+    task_results_std.to_csv(os.path.join(exp_dir, 'task_results_std.csv'))
 
 def evaluate(trial_config, trial_dir):
     """Evaluate best saved model for trial on suite of inference tasks."""
@@ -186,6 +197,9 @@ def evaluate(trial_config, trial_dir):
     task_train_metrics = {}
     task_test_metrics = {}
     for task in tasks:
+        print("---")
+        print("Running '{}' inference task...".format(task))
+        print("---")
         args = copy.deepcopy(base_args)
         vars(args).update(task_args[task])
         # Construct trainer and evaluate
@@ -195,8 +209,11 @@ def evaluate(trial_config, trial_dir):
         metric_name = task_metric_names[task]
         task_train_metrics[task] = train_metrics[metric_name]
         task_test_metrics[task] = test_metrics[metric_name]
+        task_train_std[task] = train_metrics[metric_name + '_std']
+        task_test_std[task] = test_metrics[metric_name + '_std']
 
-    return task_train_metrics, task_test_metrics
+    return (task_train_metrics, task_train_std,
+            task_test_metrics, task_test_std)
 
 if __name__ == "__main__":
     args = parser.parse_args()
