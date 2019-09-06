@@ -135,12 +135,12 @@ class Trainer(object):
     parser.add_argument('--device', type=str, default='cuda:0',
                         help='device to use')
     parser.add_argument('--anomaly_check', action='store_true', default=False,
-                        help='check for gradient anomalies')    
+                        help='check for gradient anomalies')
     parser.add_argument('--test', action='store_true', default=False,
                         help='evaluate without training')
     parser.add_argument('--find_best', action='store_true', default=False,
                         help='find best model in save directory')
-        
+
     def __init__(self, args):
         # Fix random seed
         torch.manual_seed(args.seed)
@@ -154,10 +154,10 @@ class Trainer(object):
         # Convert device string to torch.device
         args.device = (torch.device(args.device) if torch.cuda.is_available()
                        else torch.device('cpu'))
-        
+
         # Pre-process args
         args = self.pre_build_args(args)
-        
+
         # Load model if specified, or test/feature flags are set
         checkpoint = None
         if args.load is not None:
@@ -188,18 +188,18 @@ class Trainer(object):
         else:
             print('Model name not recognized.')
             return
-        
+
         # Load model state from checkpoint
         if checkpoint is not None:
             self.model.load_state_dict(checkpoint['model'])
-            
+
         # Set up optimizer
         self.optimizer = optim.Adam(self.model.parameters(),
                                     lr=args.lr, weight_decay=args.w_decay)
 
         # Post-process args
         args = self.post_build_args(args)
-        
+
     def train(self, loader, epoch, args):
         """Train for a single epoch using batched gradient descent."""
         model, optimizer = self.model, self.optimizer
@@ -319,11 +319,11 @@ class Trainer(object):
         df['z_dim'] = model.z_dim
         df.to_csv(fname, mode='a',
                   header=(not os.path.exists(fname)), sep='\t')
-    
+
     def build_model(self, constructor, args):
         raise NotImplementedError
         return model
-    
+
     def load_data(self, modalities, args):
         raise NotImplementedError
         return train_data, test_data
@@ -347,14 +347,14 @@ class Trainer(object):
         else:
             print("Ignoring unknown inference method '{}'".format(args.method))
         return args
-    
+
     def post_build_args(self, args):
         """Process args after model is constructed."""
         return args
-    
+
     def compute_metrics(self, model, infer, prior, recon,
                         targets, mask, lengths, order, args):
-        """Compute evaluation metrics from batch of inputs and outputs."""    
+        """Compute evaluation metrics from batch of inputs and outputs."""
         raise NotImplementedError
         return metrics
 
@@ -378,7 +378,7 @@ class Trainer(object):
     def load_checkpoint(self, path, device):
         checkpoint = torch.load(path, map_location=device)
         return checkpoint
-    
+
     def run_eval(self, args):
         """Evaluate on both training and test set."""
         print("--Training--")
@@ -387,7 +387,7 @@ class Trainer(object):
                                  shuffle=False, pin_memory=True)
         with torch.no_grad():
             args.eval_set = 'train'
-            results, _  = self.evaluate(eval_loader, args)
+            results, train_metrics  = self.evaluate(eval_loader, args)
             self.save_results(results, args)
 
         print("--Testing--")
@@ -396,11 +396,12 @@ class Trainer(object):
                                  shuffle=False, pin_memory=True)
         with torch.no_grad():
             args.eval_set = 'test'
-            results, _  = self.evaluate(eval_loader, args)
+            results, test_metrics  = self.evaluate(eval_loader, args)
             self.save_results(results, args)
 
         # Save command line flags, model params
         self.save_params(args)
+        return train_metrics, test_metrics
 
     def run_find(self, args):
         """Finds best trained model in save directory."""
@@ -435,10 +436,12 @@ class Trainer(object):
         checkpoint = self.load_checkpoint(path, args.device)
         model.load_state_dict(checkpoint['model'])
         with torch.no_grad():
-            self.evaluate(test_loader, args)
+            results, metrics = self.evaluate(test_loader, args)
 
         # Save command line flags, model params
         self.save_params(args)
+
+        return best_epoch, metrics
 
     def run_train(self, args, reporter=None):
         """Train model over many epochs.
@@ -451,7 +454,7 @@ class Trainer(object):
             optional status reporter for use by Ray Tune API
         """
         train_data, test_data = self.train_data, self.test_data
-        
+
         # Corrupt training data if flags are specified
         if 'uniform' in args.corrupt:
             # Uniform random deletion
@@ -466,7 +469,7 @@ class Trainer(object):
             train_data =\
                 train_data.corrupt(args.corrupt['semi'], mode='all_none',
                                    modalities=args.corrupt['modalities'])
-            
+
         # Split training data into chunks
         train_data = train_data.split(args.split, args.bylen)
         # Batch data using data loaders
@@ -480,7 +483,7 @@ class Trainer(object):
         # Create path to save models/predictions
         if not os.path.exists(args.save_dir):
             os.makedirs(args.save_dir)
-        
+
         # Train and save best model
         best_loss = float('inf')
         args.eval_set = None
@@ -495,7 +498,7 @@ class Trainer(object):
                 # Save model with best metric so far (lower is better)
                 if loss < best_loss:
                     best_loss = loss
-                    path = os.path.join(args.save_dir, "best.pth") 
+                    path = os.path.join(args.save_dir, "best.pth")
                     self.save_checkpoint(args.modalities, self.model, path)
                 # Report metrics and epoch if Ray Tune reporter is given
                 if reporter is not None:
@@ -505,11 +508,11 @@ class Trainer(object):
             # Save checkpoints
             if epoch % args.save_freq == 0:
                 path = os.path.join(args.save_dir,
-                                    "epoch_{}.pth".format(epoch)) 
+                                    "epoch_{}.pth".format(epoch))
                 self.save_checkpoint(args.modalities, self.model, path)
 
         # Save final model
-        path = os.path.join(args.save_dir, "last.pth") 
+        path = os.path.join(args.save_dir, "last.pth")
         self.save_checkpoint(args.modalities, self.model, path)
 
         # Save command line flags, model params and performance statistics
@@ -519,7 +522,7 @@ class Trainer(object):
         if reporter is not None:
             reporter(mean_loss=loss, best_loss=best_loss,
                      training_iteration=epoch, done=True, **metrics)
-        
+
     def run(self, args):
         # Evaluate model if test flag is set
         if args.test:

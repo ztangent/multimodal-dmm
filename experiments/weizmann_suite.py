@@ -4,6 +4,7 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 import os, argparse, yaml
+import copy
 
 import pandas as pd
 import ray
@@ -42,7 +43,7 @@ def run(args):
     if args.max_gpus is None:
         import torch
         args.max_gpus = min(1, torch.cuda.device_count() - 1)
-    
+
     ray.init(num_cpus=args.max_cpus, num_gpus=args.max_gpus)
 
     # Convert data dir to absolute path so that Ray trials can find it
@@ -54,7 +55,7 @@ def run(args):
         "epochs" : 500,
         "kld_anneal" : 250,
         # Save less to consume less disk space
-	"save_freq": 50,
+        "save_freq": 50,
         # Set low learning rate to prevent NaNs
         "lr": 5e-4,
         # Only train on videos, masks, and actions
@@ -88,9 +89,14 @@ def analyze(args):
     exp_dir = os.path.join(args.local_dir, args.exp_name)
     ea = ExperimentAnalysis(exp_dir)
     df = ea.dataframe().sort_values(['trial_id'])
-    best_results = {'method': [], 'loss': [],
-                    'ssim': [], 'm_ssim': [], 'action': []}
-    
+
+    metrics = ['mean_loss', 'ssim', 'm_ssim', 'action']
+    run_results = {m: [] for m in metrics}
+    run_results['method'] = []
+
+    tasks = ['recon', 'half', 'fwd', 'bwd', 'mask', 'action']
+    task_results = {task: [] for task in tasks}
+
     # Iterate across trials
     for i, trial in df.iterrows():
         print("Trial:", trial['experiment_tag'])
@@ -99,35 +105,98 @@ def analyze(args):
         except(ValueError, pd.errors.EmptyDataError):
             print("No progress data to read for trial, skipping...")
             continue
-        method = trial['config:method']
-        best_idx = trial_df.mean_loss.idxmin() 
-        best_loss, best_ssim, best_m_ssim, best_act_acc =\
-            trial_df[['mean_loss', 'ssim', 'm_ssim', 'action']].iloc[best_idx]
-        print("Best loss:", best_loss)
-        print("Best video SSIM:", best_ssim)
-        print("Best mask SSIM:", best_m_ssim)
-        print("Best action acc.:", best_act_acc)
+        method = trial['method']
+        # Find index of best loss for trial
+        best_idx = trial_df.mean_loss.idxmin()
+        trial_results = {m: trial_df[m].iloc[best_idx] for m in metrics}
+        print("Best loss:", trial_results['mean_loss'])
+        print("Best video SSIM:", trial_results['ssim'])
+        print("Best mask SSIM:", trial_results['m_ssim'])
+        print("Best action acc.:", trial_results['action'])
         print("---")
 
         # Store best results for each trial
-        best_results['method'].append(method)
-        best_results['loss'].append(best_loss)
-        best_results['ssim'].append(best_ssim)
-        best_results['m_ssim'].append(best_m_ssim)
-        best_results['action'].append(best_act_acc)
+        run_results['method'].append(method)
+        for m in metrics:
+            run_results[m].append(trial_results[m])
 
-    # Average results for each method
-    best_results = pd.DataFrame(best_results).sort_values(by='method')
-    best_results = best_results.groupby('method').mean()
-    print('--Mean--')
-    print(best_results)
+        # Get trial config and directory
+        trial_config = ea._checkpoints[i]['config']
+        trial_dir = os.path.basename(trial['logdir'])
+        trial_dir = os.path.join(exp_dir, trial_dir)
+
+        # Run evaluation suite on best saved model
+        _, trial_task_metrics = evaluate(trial_config, trial_dir)
+        task_results['method'].append(method)
+        for task in tasks:
+            task_results[task].append(trial_task_metrics[task])
+
+    # Print run results for each method
+    run_results = pd.DataFrame(run_results)
+    run_results.set_index('method')
+    print(run_results)
+
+    # Print task results for each method
+    task_results = pd.DataFrame(task_results)
+    task_results.set_index('method')
+    print(task_results)
 
     # Save results to CSV file
-    best_results.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
-        
+    run_results.to_csv(os.path.join(exp_dir, 'run_results.csv'))
+    task_results.to_csv(os.path.join(exp_dir, 'task_results.csv'))
+
+def evaluate(trial_config, trial_dir):
+    """Evaluate best saved model for trial on suite of inference tasks."""
+    # Inference task names
+    tasks = ['recon', 'half', 'fwd', 'bwd', 'mask', 'action']
+    # Evaluation arguments for inference tasks
+    task_args = {
+        # Full reconstruction
+        'recon': {'drop_frac': 0.0, 'start_frac': 0.0, 'stop_frac': 1.0},
+        # Reconstruction after dropping half
+        'half': {'drop_frac': 0.5, 'start_frac': 0.0, 'stop_frac': 1.0},
+        # Forward extrapolation of last 25%
+        'fwd': {'drop_frac': 0.0, 'start_frac': 0.0, 'stop_frac': 0.75},
+        # Backward extrapolation of first 25%
+        'bwd': {'drop_frac': 0.0, 'start_frac': 0.25, 'stop_frac': 1.0},
+        # Conditional generation of masks from video only
+        'mask': {'drop_frac': 0.0, 'start_frac': 0.0, 'stop_frac': 1.0,
+                  'drop_mods': ['mask', 'action']},
+        # Action prediction from video only
+        'action' : {'drop_frac': 0.0, 'start_frac': 0.0, 'stop_frac': 1.0,
+                    'drop_mods': ['mask', 'action']}
+    }
+    # Relevant metrics for each inference task
+    task_metric_names = {
+        'recon': 'ssim', 'half': 'ssim', 'fwd': 'ssim', 'bwd': 'ssim',
+        'mask': 'm_ssim', 'action': 'action'
+    }
+
+    # Set up default args
+    base_args = WeizmannTrainer.parser.parse_args([])
+    # Override trainer args with trial config
+    vars(base_args).update(trial_config)
+    # Set save directory (where best model is stored)
+    base_args.save_dir = os.path.join(trial_dir, base_args.save_dir)
+
+    # Iterate across inference tasks
+    task_train_metrics = {}
+    task_test_metrics = {}
+    for task in tasks:
+        args = copy.deepcopy(base_args)
+        vars(args).update(task_args[task])
+        # Construct trainer and evaluate
+        trainer = WeizmannTrainer(args)
+        train_metrics, test_metrics = trainer.run_eval(args)
+        # Save relevant metric for task
+        metric_name = task_metric_names[task]
+        task_train_metrics[task] = train_metrics[metric_name]
+        task_test_metrics[task] = test_metrics[metric_name]
+
+    return task_train_metrics, task_test_metrics
+
 if __name__ == "__main__":
     args = parser.parse_args()
     if not args.analyze:
         run(args)
     analyze(args)
-
