@@ -68,20 +68,20 @@ Ray Tune can be used to easily run experiments across multiple sets of hyper-par
 ### Learning with uniformly random missing data
 
 For the Spirals dataset:
-```python -m experiments/spirals_partial --method [bfvi|...] --trial_cpus N --trial_gpus N```
+```python -m experiments.spirals_partial --trial_cpus N --trial_gpus N```
 
 For the Weizmann dataset:
-```python -m experiments/weizmann_partial --method [bfvi|...] --trial_cpus N --trial_gpus N```
+```python -m experiments.weizmann_partial --trial_cpus N --trial_gpus N```
 
 ### Semi-supervised learning
 
 Semi-supervised learning refers to learning where some sequences have entire modalities removed.
 
 For the Spirals dataset:
-```python -m experiments/spirals_semisup --method [bfvi|...] --trial_cpus N --trial_gpus N```
+```python -m experiments.spirals_semisup --trial_cpus N --trial_gpus N```
 
 For the Weizmann dataset:
-```python -m experiments/weizmann_semisup --method [bfvi|...] --trial_cpus N --trial_gpus N```
+```python -m experiments.weizmann_semisup --trial_cpus N --trial_gpus N```
 
 ## Examples
 
