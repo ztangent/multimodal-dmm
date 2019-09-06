@@ -133,6 +133,7 @@ def analyze(args):
         # Run evaluation suite on best saved model
         _, _, task_metrics, task_std = evaluate(trial_config, trial_dir)
         task_results['method'].append(method)
+        task_results_std['method'].append(method)
         for task in tasks:
             task_results[task].append(task_metrics[task])
             task_results_std[task].append(task_std[task])
@@ -197,8 +198,7 @@ def evaluate(trial_config, trial_dir):
     task_train_metrics, task_train_std = {}, {}
     task_test_metrics, task_test_std = {}, {}
     for task in tasks:
-        print("Running '{}' inference task...".format(task))
-        print("---")
+        print("=='{}' inference task==".format(task))
         args = copy.deepcopy(base_args)
         vars(args).update(task_args[task])
         # Construct trainer and evaluate
