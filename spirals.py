@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os, copy
 
 import numpy as np
@@ -100,8 +101,8 @@ class SpiralsTrainer(trainer.Trainer):
         metrics['rec_loss'] = model.rec_loss(targets, recon, mask,
                                              args.rec_mults).item()
         # Compute mean squared error in 2D space for each time-step
-        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in recon.keys()])
-        mse = mse.sum(dim=range(2, mse.dim()))
+        mse = sum([(recon[m][0]-targets[m]).pow(2) for m in list(recon.keys())])
+        mse = mse.sum(dim=list(range(2, mse.dim())))
         # Average across timesteps, for each sequence
         def time_avg(val):
             val[1 - mask.squeeze(-1)] = 0.0
@@ -112,7 +113,7 @@ class SpiralsTrainer(trainer.Trainer):
     def summarize_metrics(self, metrics, n_timesteps):
         """Summarize and print metrics across dataset."""
         summary = dict()
-        for key, val in metrics.items():
+        for key, val in list(metrics.items()):
             if type(val) is list:
                 # Compute mean and std dev. of metric over sequences
                 summary[key] = np.mean(val)

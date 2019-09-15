@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range, object
 import sys, os, shutil
 import argparse, yaml
 
@@ -314,7 +315,7 @@ class Trainer(object):
         """Save training parameters to file."""
         model = self.model
         fname = 'param_hist.tsv'
-        df = pd.DataFrame([vars(args)], columns=vars(args).keys())
+        df = pd.DataFrame([vars(args)], columns=list(vars(args).keys()))
         df = df[['save_dir', 'model', 'modalities',
                  'batch_size', 'split', 'epochs', 'lr', 'w_decay', 'seed',
                  'burst_frac', 'kld_mult', 'rec_mults', 'kld_anneal',

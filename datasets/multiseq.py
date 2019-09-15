@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import zip, range
 import os, re, copy, itertools
 
 import pandas as pd
@@ -11,7 +12,7 @@ from torch.utils.data import Dataset
 
 class MultiseqDataset(Dataset):
     """Multimodal dataset for (synchronous) time series and sequential data."""
-    
+
     def __init__(self, modalities, dirs, regex, preprocess, rates,
                  base_rate=None, truncate=False,
                  ids_as_mods=[], item_as_dict=False):
@@ -48,7 +49,7 @@ class MultiseqDataset(Dataset):
         if type(preprocess) is not list:
             preprocess = [preprocess] * len(self.modalities)
         preprocess = {m: p for m, p in zip(modalities, preprocess)}
-        
+
         # Load filenames into lists and extract regex-captured sequence IDs
         paths = dict()
         seq_ids = dict()
@@ -80,7 +81,7 @@ class MultiseqDataset(Dataset):
         # Compute ratio to base rate
         self.ratios = {m: r/self.base_rate for m, r in
                        zip(self.modalities, self.rates)}
-            
+
         # Load data from files
         self.data = {m: [] for m in modalities}
         self.orig = {m: [] for m in modalities}
@@ -88,7 +89,7 @@ class MultiseqDataset(Dataset):
         for i in range(len(self.seq_ids)):
             seq_len = float('inf')
             # Load each input modality
-            for m, data in self.data.iteritems():
+            for m, data in self.data.items():
                 fp = paths[m][i]
                 if re.match("^.*\.npy", fp):
                     # Load as numpy array
@@ -149,7 +150,7 @@ class MultiseqDataset(Dataset):
                 # Convert to float to allow NaNs for missing values
                 d = d.astype(float)
                 self.data[m].append(d)
-            
+
     def __len__(self):
         return len(self.seq_ids)
 
@@ -180,7 +181,7 @@ class MultiseqDataset(Dataset):
         m_min = {m: np.nanmin(np.stack([a.min(0) for a in self.data[m]]), 0)
                  for m in modalities}
         return m_max, m_min
-    
+
     def normalize_(self, modalities=None, method='meanvar', ref_data=None):
         """Normalize data either by mean-and-variance or to [-1,1])."""
         if modalities is None:
@@ -211,12 +212,12 @@ class MultiseqDataset(Dataset):
         dataset = copy.deepcopy(self)
         dataset.normalize_(modalities, method, ref_data)
         return dataset
-            
+
     def split_(self, n, n_is_len=True):
         """Splits each sequence into chunks (in place)."""
         if n_is_len:
             # Use n as maximum chunk length
-            split = [range(n, l, n) for l in self.lengths]
+            split = [list(range(n, l, n)) for l in self.lengths]
         else:
             # Use n as number of chunks
             split = [n for l in self.lengths]
@@ -228,7 +229,7 @@ class MultiseqDataset(Dataset):
                 [[i] * (len(s)+1) for i,s in zip(self.seq_ids, split)]))
         else:
             self.seq_ids = list(itertools.chain.from_iterable(
-                [[i] * n for i in self.seq_ids]))            
+                [[i] * n for i in self.seq_ids]))
         self.lengths = [len(d) for d in self.data[self.modalities[0]]]
 
     def split(self, n, n_is_len=True):
@@ -254,22 +255,22 @@ class MultiseqDataset(Dataset):
             def del_func(length):
                 t_start = np.random.randint(length)
                 t_stop = min(t_start + int(del_frac * length), length)
-                return range(t_start, t_stop)
+                return list(range(t_start, t_stop))
         elif mode == 'all_none':
             def del_func(length):
-                return [] if (np.random.random() > del_frac) else range(length)
-            
+                return ([] if (np.random.random() > del_frac)
+                        else list(range(length)))
         for m in modalities:
             for i in range(len(self.data[m])):
                 del_idx = del_func(len(self.data[m][i]))
-                self.data[m][i][del_idx] = float('nan')        
+                self.data[m][i][del_idx] = float('nan')
 
     def corrupt(self, del_frac, mode='uniform', modalities=None):
         """Corrupt dataset by randomly deleting data (return new dataset)."""
         dataset = copy.deepcopy(self)
         dataset.corrupt_(del_frac, mode, modalities)
         return dataset
-                
+
     def select(self, seq_ids, invert=False):
         """Select sequences by identifiers and return new dataset.
 
@@ -296,7 +297,7 @@ class MultiseqDataset(Dataset):
             sel.data[m] = [sel.data[m][i] for i in idx]
             sel.orig[m] = [sel.orig[m][i] for i in idx]
         return sel
-    
+
     @classmethod
     def merge(cls, set1, set2):
         """Merge two datasets."""
@@ -315,7 +316,7 @@ class MultiseqDataset(Dataset):
         for m in merged.modalities:
             merged.data[m] += copy.deepcopy(set2.data[m])
         return merged
-        
+
 def len_to_mask(lengths, time_first=True):
     """Converts list of sequence lengths to a mask tensor."""
     mask = torch.arange(max(lengths)).expand(len(lengths), max(lengths))
@@ -356,7 +357,7 @@ def seq_collate(data, time_first=True):
     n_modalities = len(data)
     lengths = np.zeros(n_modalities, dtype=int)
     data.sort(key=lambda x: len(x[0]), reverse=True)
-    data = zip(*data)
+    data = list(zip(*data))
     for modality in data:
         m_lengths = [len(seq) for seq in modality]
         lengths = np.maximum(lengths, m_lengths)
@@ -370,7 +371,7 @@ def seq_collate(data, time_first=True):
 def seq_collate_dict(data, time_first=True):
     """Collate that accepts and returns dictionaries of batch tensors."""
     batch = {}
-    modalities = [k for k in data[0].keys() if  k != 'length']
+    modalities = [k for k in data[0] if  k != 'length']
     order = sorted(range(len(data)),
                    key=lambda i: data[i]['length'], reverse=True)
     data.sort(key=lambda d: d['length'], reverse=True)
@@ -402,7 +403,7 @@ def seq_decoll_dict(batch_dict, lengths, order, time_first=True):
 def func_delete(batch_in, del_func, lengths=None, modalities=None):
     """Use del_func to compute time indices to delete. Assumes time_first."""
     if modalities == None:
-        modalities = batch_in.keys()
+        modalities = list(batch_in.keys())
     batch_out = dict()
     for m in batch_in.keys():
         batch_out[m] = batch_in[m].clone().detach()
@@ -427,21 +428,19 @@ def burst_delete(batch_in, burst_frac, lengths=None, modalities=None):
     def del_func(length):
         t_start = np.random.randint(length)
         t_stop = min(t_start + int(burst_frac * length), length)
-        return range(t_start, t_stop)
+        return list(range(t_start, t_stop))
     return func_delete(batch_in, del_func, lengths, modalities)
 
 def keep_segment(batch_in, f_start, f_stop, lengths=None, modalities=None):
     """Delete all data outside of specified time fraction [f_start, f_stop)."""
     def del_func(length):
         t_start, t_stop = int(f_start * length), int(f_stop * length)
-        return range(0, t_start) + range(t_stop, length)
+        return list(range(0, t_start)) + list(range(t_stop, length))
     return func_delete(batch_in, del_func, lengths, modalities)
 
 def del_segment(batch_in, f_start, f_stop, lengths=None, modalities=None):
     """Delete specified time fraction [f_start, f_stop)."""
     def del_func(length):
         t_start, t_stop = int(f_start * length), int(f_stop * length)
-        return range(t_start, t_stop)
+        return list(range(t_start, t_stop))
     return func_delete(batch_in, del_func, lengths, modalities)
-    
-        

@@ -13,6 +13,8 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import zip, range
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -31,7 +33,7 @@ class MultiDKS(MultiDGTS):
         Construct multimodal deep Markov model.
 
         Parameters
-        ----------         
+        ----------
         modalities : list of str
             list of names for each modality
         dims : list of int or tuple
@@ -77,7 +79,7 @@ class MultiDKS(MultiDGTS):
         self.dists = dict(zip(modalities, dists))
 
         # Encoders for each modality to RNN input features
-        self.enc = nn.ModuleDict()            
+        self.enc = nn.ModuleDict()
         # Default to linear encoder with ReLU
         for m in self.modalities:
             self.feat_dims[m] = h_dim
@@ -94,7 +96,7 @@ class MultiDKS(MultiDGTS):
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
-                encoders = zip(modalities, encoders)
+                encoders = list(zip(modalities, encoders))
             self.enc.update(encoders)
         # Read feature dimenions from encoders, else default to h_dim
         for m in self.modalities:
@@ -102,7 +104,7 @@ class MultiDKS(MultiDGTS):
                 self.feat_dims[m] = self.enc[m].feat_dim
             else:
                 self.feat_dims[m] = h_dim
-        
+
         # Decoders for each modality p(x|z) = N(mu(z), sigma(z))
         self.dec = nn.ModuleDict()
         # Default to MLP
@@ -116,9 +118,9 @@ class MultiDKS(MultiDGTS):
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
-                decoders = zip(modalities, decoders)
+                decoders = list(zip(modalities, decoders))
             self.dec.update(decoders)
-            
+
         # Forward conditional p(z|z_prev) = N(mu(z_prev), sigma(z_prev))
         self.fwd = common.GaussianGTF(z_dim, h_dim, min_std=min_std)
 
@@ -150,13 +152,13 @@ class MultiDKS(MultiDGTS):
 
         # Initial prior
         self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
-        self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)        
-    
+        self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)
+
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
         Parameters
-        ----------         
+        ----------
         inputs : dict of str : torch.tensor
            keys are modality names, tensors are (T, B, D)
            for max sequence length T, batch size B and input dims D
@@ -209,11 +211,11 @@ class MultiDKS(MultiDGTS):
         # Concatenate features across modalities
         if self.feat_to_z:
             feat_cat = torch.cat([feats[m] for m in self.modalities], dim=-1)
-            
+
         # Initialize RNN hidden states
         h = {m: self.h0[m].repeat(1, b_dim, 1) for m in self.modalities}
         h_out = {m: [] for m in self.modalities}
-        
+
         # Pass through RNN inference networks
         t_rng = range(t_max) if self.rnn_dir=='fwd' else reversed(range(t_max))
         for t in t_rng:
@@ -235,12 +237,12 @@ class MultiDKS(MultiDGTS):
         # Flip across time if using backwards RNN
         if self.rnn_dir == 'bwd':
             h_out = torch.flip(h_out, [0])
-                
+
         # Find indices for last observations
         mask_all = torch.stack([masks[m] for m in self.modalities]).prod(dim=0)
         _, t_stop = mask_to_extent(mask_all)
         t_stop = t_stop.unsqueeze(-1)
-        
+
         # Forward pass to infer and sample from p(z_1:T|x_1:T)
         z_samples = []
         for t in range(t_max):
@@ -260,16 +262,16 @@ class MultiDKS(MultiDGTS):
             else:
                 comb_in = torch.cat([z_t, h_out[t]], dim=-1)
             infer_mean_t, infer_std_t = self.combiner(comb_in)
-            
+
             # Only infer for timesteps before the last observation
-            infer_mean_t = (infer_mean_t * (t <= t_stop).float() + 
+            infer_mean_t = (infer_mean_t * (t <= t_stop).float() +
                             prior_mean_t * (t > t_stop).float())
-            infer_std_t = (infer_std_t * (t <= t_stop).float() + 
+            infer_std_t = (infer_std_t * (t <= t_stop).float() +
                            prior_std_t * (t > t_stop).float())
-            
+
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
-            
+
             if sample or (sample_init and t == 0):
                 # Sample z from p(z_t|z_{t-1}, x_{1:T})
                 z_t = self._sample_gauss(infer_mean_t, infer_std_t)
@@ -298,7 +300,7 @@ class MultiDKS(MultiDGTS):
         """Generates a sequence of the input data by sampling.
 
         Parameters
-        ----------         
+        ----------
         t_max : int
             number of timesteps T to sample
         b_dim : int
@@ -325,7 +327,7 @@ class MultiDKS(MultiDGTS):
             # Sample from prior
             z_t = self._sample_gauss(prior_mean_t, prior_std_t)
             z_samples.append(z_t)
-            
+
         # Concatenate z samples across time
         z_samples = torch.stack(z_samples, dim=0)
 
@@ -336,7 +338,7 @@ class MultiDKS(MultiDGTS):
             rec_shape = [t_max, b_dim] + list(recon_m[0].shape[1:])
             # Reshape each output parameter (e.g. mean, std) to (T, B, ...)
             recon[m] = tuple(r.reshape(*rec_shape) for r in recon_m)
-            
+
         return recon
 
 if __name__ == "__main__":

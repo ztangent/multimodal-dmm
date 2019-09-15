@@ -1,3 +1,9 @@
+from __future__ import division
+from __future__ import print_function
+from __future__ import absolute_import
+
+from builtins import range
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -26,9 +32,9 @@ def plot_grad_flow(named_parameters, fignum=10):
     """Plots the gradients flowing through different layers in the net
     during training. Can be used for checking for possible gradient vanishing
     / exploding problems.
-    
-    Usage: Plug this function in after loss.backwards() as 
-    "plot_grad_flow(self.model.named_parameters())" 
+
+    Usage: Plug this function in after loss.backwards() as
+    "plot_grad_flow(self.model.named_parameters())"
     to visualize the gradient flow
 
     src: https://discuss.pytorch.org/t/check-gradient-flow-in-network/15063/10
@@ -49,7 +55,7 @@ def plot_grad_flow(named_parameters, fignum=10):
     plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
     plt.bar(np.arange(len(max_grads)), nan_grads, alpha=1.0, lw=1, color="r")
     plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
-    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+    plt.xticks(list(range(0,len(ave_grads), 1)), layers, rotation="vertical")
     plt.xlim(left=0, right=len(ave_grads))
     plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
     plt.xlabel("Layers")
@@ -67,7 +73,7 @@ def plot_grad_flow(named_parameters, fignum=10):
 
 
 # SSIM code below is adapted from https://github.com/VainF/pytorch-msssim/
-    
+
 def _fspecial_gauss_1d(size, sigma):
     r"""Create 1-D gauss kernel
     Args:
@@ -107,7 +113,7 @@ def _ssim(X, Y, win, data_range=1.0, size_average=False, full=False):
         X (torch.Tensor): batch of images
         Y (torch.Tensor): batch of images
         win (torch.Tensor): 1-D gauss kernel
-        data_range (float or int, optional): value range of input images. 
+        data_range (float or int, optional): value range of input images.
         size_average (bool, optional): if True, average across batch
         full (bool, optional): return sc or not
     Returns:
@@ -165,7 +171,7 @@ def eval_ssim(X, Y, win_size=11, win_sigma=1.5, win=None,
         win_size: (int, optional): the size of gauss kernel
         win_sigma: (float, optional): sigma of normal distribution
         win (torch.Tensor, optional): 1-D gauss kernel.
-        data_range (float or int, optional): value range of input images. 
+        data_range (float or int, optional): value range of input images.
         size_average (bool, optional): if True, average across batch
         full (bool, optional): return sc or not
     Returns:

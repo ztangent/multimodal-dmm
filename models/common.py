@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import torch
 import torch.nn as nn
 
@@ -56,7 +57,7 @@ class GaussianGTF(nn.Module):
             nn.Linear(h_dim, z_dim))
         self.z_to_std = nn.Sequential(
             nn.Linear(z_dim, z_dim),
-            nn.Softplus())        
+            nn.Softplus())
 
     def forward(self, z):
         gate = self.z_to_gate(z)
@@ -109,7 +110,7 @@ class Deconv(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class ImageEncoder(nn.Module):
     """Convolutional encoder for images."""
     def __init__(self, z_dim, gauss_out=True,
@@ -135,7 +136,7 @@ class ImageEncoder(nn.Module):
 
             nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
             nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
-        
+
     def forward(self, x):
         feats = self.conv_stack(x)
         if not self.gauss_out:

@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os, argparse, yaml
 
 import pandas as pd
@@ -54,7 +55,7 @@ def run(args):
         # Set low learning rate to prevent NaNs
         "lr": 5e-3,
         # Repeat each configuration with different random seeds
-        "seed": tune.grid_search(range(args.n_repeats)),
+        "seed": tune.grid_search(list(range(args.n_repeats))),
         # Delete spiral y-coordinates in 10% steps
         "corrupt": tune.grid_search([{'semi': i/10, 'modalities': ['spiral-y']}
                                      for i in range(10)])

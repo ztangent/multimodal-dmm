@@ -2,7 +2,7 @@
 https://github.com/emited/VariationalRecurrentNeuralNetwork
 
 Original VRNN described in https://arxiv.org/abs/1506.02216
-using unimodal isotropic gaussian distributions for 
+using unimodal isotropic gaussian distributions for
 inference, prior, and generating models.
 
 To handle missing modalities, we use the MVAE approach
@@ -14,6 +14,8 @@ Requires pytorch >= 0.4.1 for nn.ModuleDict
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
+
+from builtins import zip, range
 
 import math
 import torch
@@ -66,7 +68,7 @@ class MultiVRNN(MultiDGTS):
         if dists is None:
             dists = ['Normal'] * self.n_mods
         self.dists = dict(zip(modalities, dists))
-        
+
         # Feature-extracting transformations
         self.phi = nn.ModuleDict()
         for m in self.modalities:
@@ -85,7 +87,7 @@ class MultiVRNN(MultiDGTS):
         if encoders is not None:
             # Use custom encoders if provided
             if type(encoders) is list:
-                encoders = zip(modalities, encoders)
+                encoders = list(zip(modalities, encoders))
             self.enc.update(encoders)
 
         # Decoders p(xi|z) = N(mu(z,h), sigma(z,h))
@@ -96,19 +98,19 @@ class MultiVRNN(MultiDGTS):
         if decoders is not None:
             # Use custom decoders if provided
             if type(decoders) is list:
-                decoders = zip(modalities, decoders)
+                decoders = list(zip(modalities, decoders))
             self.dec.update(decoders)
-            
+
         # Prior p(z) = N(mu(h), sigma(h))
         self.prior = GaussianMLP(h_dim, z_dim, h_dim)
-        
+
         # Recurrence h_next = f(z,h) or f(x,z,h)
         if recur_mode == 'use_inputs':
             self.rnn = nn.GRU((self.n_mods+1) * h_dim, h_dim, n_layers, bias)
         else:
             self.rnn = nn.GRU(h_dim, h_dim, n_layers, bias)
         self.h0 = nn.Parameter(torch.zeros(n_layers, 1, h_dim))
-        
+
         # Store module in specified device (CUDA/CPU)
         self.device = (device if torch.cuda.is_available() else
                        torch.device('cpu'))
@@ -117,7 +119,7 @@ class MultiVRNN(MultiDGTS):
         # Initial prior
         self.z0_mean = z0_mean * torch.ones(1, z_dim).to(self.device)
         self.z0_std = z0_std * torch.ones(1, z_dim).to(self.device)
-        
+
     def forward(self, inputs, **kwargs):
         """Takes in (optionally missing) inputs and reconstructs them.
 
@@ -137,10 +139,10 @@ class MultiVRNN(MultiDGTS):
         infer_mean, infer_std = [], []
         rec_mean = {m: [] for m in self.modalities}
         rec_std = {m: [] for m in self.modalities}
-        
+
         # Initialize hidden state
         h = self.h0.repeat(1, batch_size, 1)
-            
+
         for t in range(seq_len):
             # Compute prior for z
             if t > 0:
@@ -156,7 +158,7 @@ class MultiVRNN(MultiDGTS):
             z_std_t = [prior_std_t]
             masks = [torch.ones((batch_size,), dtype=torch.uint8,
                                 device=self.device)]
-            
+
             # Encode modalities to latent code z
             for m in self.modalities:
                 # Ignore missing modalities
@@ -166,7 +168,7 @@ class MultiVRNN(MultiDGTS):
                 mask = (1 - torch.isnan(inputs[m][t]).any(dim=1))
                 input_m_t = inputs[m][t].clone().detach()
                 input_m_t[torch.isnan(input_m_t)] = 0.0
-                # Extract features 
+                # Extract features
                 phi_m_t = self.phi[m](input_m_t)
                 enc_in_t = torch.cat([phi_m_t, h[-1]], 1)
                 # Compute mean and std of latent z given modality m
@@ -182,7 +184,7 @@ class MultiVRNN(MultiDGTS):
             mask = torch.stack(masks, dim=0)
             infer_mean_t, infer_std_t = \
                 self.product_of_experts(z_mean_t, z_std_t, mask)
-            
+
             infer_mean.append(infer_mean_t)
             infer_std.append(infer_std_t)
 
@@ -192,7 +194,7 @@ class MultiVRNN(MultiDGTS):
             else:
                 zq_t = infer_mean_t
             phi_zq_t = self.phi_z(zq_t)
-            
+
             # Decode sampled z to reconstruct inputs
             dec_in_t = torch.cat([phi_zq_t, h[-1]], 1)
             for m in self.modalities:
@@ -217,7 +219,7 @@ class MultiVRNN(MultiDGTS):
                 # Compute h using imputed x and inferred z (h_next = f(x,z,h))
                 rnn_in = torch.cat([phi_x_t, phi_zq_t], 1)
                 _, h = self.rnn(rnn_in.unsqueeze(0), h)
-                
+
             else:
                 # Compute h using inferred z (h_next = f(x,z,h))
                 _, h = self.rnn(phi_zq_t.unsqueeze(0), h)
@@ -249,7 +251,7 @@ class MultiVRNN(MultiDGTS):
             # Sample from prior
             z_t = self._sample_gauss(prior_mean_t, prior_std_t)
             phi_z_t = self.phi_z(z_t)
-            
+
             # Decode sampled z to reconstruct inputs
             dec_in_t = torch.cat([phi_z_t, h[-1]], 1)
             for m in self.modalities:
@@ -274,9 +276,9 @@ class MultiVRNN(MultiDGTS):
         for m in self.modalities:
             rec_mean[m] = torch.stack(rec_mean[m])
             rec_std[m] = torch.stack(rec_std[m])
-            
+
         return rec_mean, rec_std
-    
+
 if __name__ == "__main__":
     # Test code by running 'python -m models.vrnn' from base directory
     import argparse

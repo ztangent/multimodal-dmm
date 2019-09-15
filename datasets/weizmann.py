@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os, sys
 
 import numpy as np
@@ -63,7 +64,7 @@ def download_weizmann(dest='./weizmann'):
         except requests.exceptions.RequestException:
             print("\nError downloading, attempting to resume...")
             download(filename, source, dest)
-            
+
     # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
     ffmpeg_params = {'-s': '64x64',
                      '-vf': 'crop=128:128:26:8'}

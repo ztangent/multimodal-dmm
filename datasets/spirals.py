@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os
 
 import numpy as np
@@ -58,7 +59,7 @@ def gen_dataset(n_examples=1000, n_train=600,
         os.makedirs(data_dir)
         os.makedirs(os.path.join(data_dir, 'train'))
         os.makedirs(os.path.join(data_dir, 'test'))
-    # Reset random seed for consistency    
+    # Reset random seed for consistency
     rand.seed(1)
     # Shuffle indices
     indices = list(range(n_examples))
@@ -121,7 +122,7 @@ def test_dataset(data_dir='./spirals', subset='train', stats=False):
             print("Std:", m_std[m])
             print("Max:", m_max[m])
             print("Min:", m_min[m])
-        
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -145,4 +146,3 @@ if __name__ == '__main__':
     else:
         gen_dataset(args.n_examples, args.n_train,
                     args.timesteps, args.data_dir)
-        

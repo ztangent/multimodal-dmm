@@ -4,6 +4,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os, copy
 from collections import defaultdict
 
@@ -26,14 +27,14 @@ class WeizmannTrainer(trainer.Trainer):
     # Add these arguments specifically for the Weizmann dataset
     parser.add_argument('--viz_mod', type=str, default='video', metavar='M',
                         help='image modality to visualize')
-    
+
     # Rewrite split help function to be more clear
     for action in parser._actions:
         if action.dest != 'split':
             continue
         action.help = 'split each training sequence into L-sized chunks'
         action.metavar = 'L'
-    
+
     # Set parameter defaults for Weizmann dataset
     defaults = {
         'modalities' : ['video', 'person', 'action'],
@@ -48,7 +49,7 @@ class WeizmannTrainer(trainer.Trainer):
         'save_dir' : './weizmann_save'
     }
     parser.set_defaults(**defaults)
-    
+
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
         dims = {'video': (3, 64, 64), 'mask': (1, 64, 64),
@@ -85,7 +86,7 @@ class WeizmannTrainer(trainer.Trainer):
             # Use both unimodal and multimodal ELBO training loss
             args.train_args['uni_loss'] = True
         return args
-    
+
     def post_build_args(self, args):
         """Process args after model is constructed."""
         # Scale up reconstruction loss depending on how much data is corrupted
@@ -112,10 +113,10 @@ class WeizmannTrainer(trainer.Trainer):
             # Normalize training data in-place
             train_data.normalize_(modalities=args.normalize)
         return train_data, test_data
-    
+
     def compute_metrics(self, model, infer, prior, recon,
                         targets, mask, lengths, order, args):
-        """Compute evaluation metrics from batch of inputs and outputs."""    
+        """Compute evaluation metrics from batch of inputs and outputs."""
         metrics = dict()
         t_max, b_dim = max(lengths), len(lengths)
         if type(lengths) != torch.Tensor:
@@ -129,7 +130,7 @@ class WeizmannTrainer(trainer.Trainer):
         # Compute video mean squared error and SSIM for each timestep
         rec_vid, tgt_vid = recon['video'][0], targets['video']
         mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
-        mse = mse.sum(dim=range(2, mse.dim()))
+        mse = mse.sum(dim=list(range(2, mse.dim())))
         ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
         ssim = ssim.view(t_max, b_dim)
 
@@ -137,11 +138,11 @@ class WeizmannTrainer(trainer.Trainer):
         if 'mask' in recon:
             rec_mask, tgt_mask = recon['mask'][0], targets['mask']
             m_mse = ((rec_mask - tgt_mask).pow(2) / rec_mask[0,0].numel())
-            m_mse = m_mse.sum(dim=range(2, m_mse.dim()))
+            m_mse = m_mse.sum(dim=list(range(2, m_mse.dim())))
             m_ssim = eval_ssim(rec_mask.flatten(0, 1),
                                tgt_mask.flatten(0, 1))
             m_ssim = m_ssim.view(t_max, b_dim)
-        
+
         # Average across timesteps, for each sequence
         def time_avg(val):
             val[1 - mask.squeeze(-1)] = 0.0
@@ -168,7 +169,7 @@ class WeizmannTrainer(trainer.Trainer):
     def summarize_metrics(self, metrics, n_timesteps):
         """Summarize and print metrics across dataset."""
         summary = defaultdict(lambda : float('nan'))
-        for key, val in metrics.items():
+        for key, val in list(metrics.items()):
             if type(val) is list:
                 # Compute mean and std dev. of metric over sequences
                 summary[key] = np.mean(val)
@@ -196,8 +197,8 @@ class WeizmannTrainer(trainer.Trainer):
         predicted = results['recon']
 
         # Get image modality to visualize
-        viz_mod = 'video' if not hasattr(args, 'viz_mod') else args.viz_mod 
-        
+        viz_mod = 'video' if not hasattr(args, 'viz_mod') else args.viz_mod
+
         # Select best and worst predictions
         sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
                                   np.argsort(metric)[:1]))
@@ -208,7 +209,7 @@ class WeizmannTrainer(trainer.Trainer):
 
         sel_true_act = [reference['action'][i] for i in sel_idx]
         sel_obsv_act = [observed['action'][i] for i in sel_idx]
-        if 'action' in predicted.keys():
+        if 'action' in predicted:
             sel_pred_act = [predicted['action'][i][:,0] for i in sel_idx]
         else:
             sel_pred_act = [None] * len(sel_idx)
@@ -255,7 +256,7 @@ class WeizmannTrainer(trainer.Trainer):
             pred_board = stitch(pred, times)
 
             # Set missing observations to white
-            obsv_board[np.isnan(obsv_board)] = 1.0 
+            obsv_board[np.isnan(obsv_board)] = 1.0
 
             # Read predicted action names
             pred_probs = p_act.max(axis=1)
@@ -283,7 +284,7 @@ class WeizmannTrainer(trainer.Trainer):
         # Remove axis borders
         for i in range(len(axes)):
             for spine in axes[i].spines.values():
-                spine.set_visible(False)        
+                spine.set_visible(False)
 
         plt.tight_layout()
         plt.draw()
@@ -389,7 +390,7 @@ class WeizmannTrainer(trainer.Trainer):
 
         if save_args['one_file']:
             vwriter.release()
-    
+
 if __name__ == "__main__":
     args = WeizmannTrainer.parser.parse_args()
     trainer = WeizmannTrainer(args)

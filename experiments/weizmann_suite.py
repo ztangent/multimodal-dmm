@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from builtins import range
 import os, argparse, yaml
 import copy
 
@@ -63,7 +64,7 @@ def run(args):
         # Do not provide masks or action labels for test set
         "drop_mods": ['mask', 'action'],
         # Repeat each configuration with different random seeds
-        "seed": tune.grid_search(range(args.n_repeats)),
+        "seed": tune.grid_search(list(range(args.n_repeats))),
         # Iterate across inference methods
         "method": tune.grid_search(['bfvi', 'b-mask', 'f-mask',
                                     'b-skip', 'f-skip'])
