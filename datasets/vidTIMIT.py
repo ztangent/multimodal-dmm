@@ -12,7 +12,7 @@ if __name__ == '__main__':
 else:
     from .multiseq import MultiseqDataset, seq_collate
 
-fps = 25.0    
+fps = 25.0
 subjects = [
     'fadg0', 'faks0', 'fcft0', 'fcmh0', 'fcmr0', 'fcrh0', 'fdac1', 'fdms0',
     'fdrd1', 'fedw0', 'felc0', 'fgjd0', 'fjas0', 'fjem0', 'fjre0', 'fjwb0',
@@ -34,7 +34,7 @@ class VidTIMITDataset(MultiseqDataset):
             len([f for f in os.listdir(audio_dir) if f[-3:] == 'npy']) == 0 or
             len([f for f in os.listdir(video_dir) if f[-3:] == 'npy']) == 0):
             download_vidTIMIT(dest=data_dir)
-            
+
         super(VidTIMITDataset, self).__init__(
             modalities=['audio', 'video'], dirs=[audio_dir, video_dir],
             regex="(\w+)_(\w+)\.npy", preprocess=None,
@@ -44,68 +44,12 @@ class VidTIMITDataset(MultiseqDataset):
 def download_vidTIMIT(dest='./vidTIMIT'):
     """Downloads and preprocesses VidTIMIT dataset."""
     src_url = ('https://zenodo.org/record/158963/files/')
-    
-    import requests, zipfile
-    from tqdm import tqdm
-    import PIL.Image, skimage.transform
-    import scipy.io.wavfile, scipy.signal
 
-    def download(filename, source, dest):
-        print("Downloading '{}'...".format(filename))
-        url = source + filename
-        try:
-            with open(os.path.join(dest, filename), 'ab') as f:
-                headers = {}
-                pos = f.tell()
-                if pos:
-                    headers['Range'] = 'bytes={}-'.format(pos)
-                resp = requests.get(url, headers=headers, stream=True)
-                total_size = resp.headers.get('content-length', None)
-                total = int(total_size)//1024 if total_size else None
-                for data in tqdm(iterable=resp.iter_content(chunk_size=512),
-                                 total=total, unit='KB'):
-                    f.write(data)
-        except requests.exceptions.RequestException:
-            print("\nError downloading, attempting to resume...")
-            download(filename, source, dest)
-
-    def img_dir_to_npy(path):
-        fnames = sorted(os.listdir(path))
-        npy = np.array([np.array(PIL.Image.open(os.path.join(path, fname)))
-                        for fname in fnames])
-        return npy
-
-    def preprocess_video(video):
-        """Crop, normalize to [0,1] and swap dimensions."""
-        height, width = video.shape[1:3]
-        side = min(height, width)
-        x0 = (width - side)//2
-        y0 = (height - side)//2
-        # Crop to central square
-        video = np.array(video[:, y0:y0+side, x0:x0+side])
-        # Resize to 64 by 64 and normalize to [0, 1]
-        video = np.stack([skimage.transform.resize(video[t], (64, 64, 3))
-                         for t in range(video.shape[0])], axis=0)
-        # Transpose to (time, channels, rows, cols)
-        video = np.transpose(video, (0,3,1,2))
-        return video            
-
-    def preprocess_audio(audio, rate):
-        """Convert to spectrogram using 25 windows per second."""
-        win_sz = rate / fps * 2
-        # Perform Short Time Fourier Transform (STFT)
-        f, t, spec = scipy.signal.stft(audio, rate,
-                                       nperseg=win_sz, noverlap=win_sz/2)
-        # Swap time and frequency axes
-        spec = spec.T
-        # Stack the windows [T-2, T-1, T, T+1, T+2] as channels for Tth feature
-        overlap = 2
-        n_wins = spec.shape[0]
-        spec = np.pad(spec, [(overlap, overlap), (0, 0)], mode='constant')
-        spec = spec[np.arange(n_wins)[:, None] + np.arange(overlap*2+1)]
-        # Separate and concat real and imaginary parts as channels
-        spec = np.concatenate([np.real(spec), np.imag(spec)], axis=1)
-        return spec
+    import zipfile, scipy.io.wavfile
+    if __name__ == '__main__':
+        import utils
+    else:
+        from . import utils
 
     # Create dataset directories
     if not os.path.exists(dest):
@@ -116,14 +60,14 @@ def download_vidTIMIT(dest='./vidTIMIT'):
     aud_dir = os.path.join(dest, 'audio')
     if not os.path.exists(aud_dir):
         os.mkdir(aud_dir)
-        
+
     for subj in subjects:
         subj_path = os.path.join(dest, subj)
 
         # Download and extract videos
         zip_path = subj_path + '.zip'
         if not os.path.exists(zip_path):
-            download(subj + '.zip', source=src_url, dest=dest)
+            utils.download(subj + '.zip', source=src_url, dest=dest)
         if not os.path.exists(subj_path):
             with zipfile.ZipFile(zip_path, "r") as f:
                 print("Extracting subject '{}'".format(subj))
@@ -155,11 +99,66 @@ def download_vidTIMIT(dest='./vidTIMIT'):
             aud_path = os.path.join(subj_aud_dir, aud_name)
             print("Converting {} to NPY...".format(aud_path))
             rate, aud_data = scipy.io.wavfile.read(aud_path)
-            aud_data = preprocess_audio(aud_data, rate)
+            aud_data = wav_to_spec(aud_data, rate)
             aud_name = aud_name[:-4]
             # Save in main audio directory
             npy_path = os.path.join(aud_dir, subj + '_' + aud_name + '.npy')
             np.save(npy_path, aud_data)
+
+def img_dir_to_npy(path):
+    import PIL.Image
+    fnames = sorted(os.listdir(path))
+    npy = np.array([np.array(PIL.Image.open(os.path.join(path, fname)))
+                    for fname in fnames])
+    return npy
+
+def preprocess_video(video):
+    """Crop, normalize to [0,1] and swap dimensions."""
+    import skimage.transform
+    height, width = video.shape[1:3]
+    side = min(height, width)
+    x0 = (width - side)//2
+    y0 = (height - side)//2
+    # Crop to central square
+    video = np.array(video[:, y0:y0+side, x0:x0+side])
+    # Resize to 64 by 64 and normalize to [0, 1]
+    video = np.stack([skimage.transform.resize(video[t], (64, 64, 3))
+                     for t in range(video.shape[0])], axis=0)
+    # Transpose to (time, channels, rows, cols)
+    video = np.transpose(video, (0,3,1,2))
+    return video
+
+def wav_to_spec(wav, rate):
+    """Convert to spectrogram using 25 windows per second."""
+    import scipy.signal
+    win_sz = rate / fps * 2
+    # Perform Short Time Fourier Transform (STFT)
+    f, t, spec = scipy.signal.stft(wav, rate, nperseg=win_sz, noverlap=win_sz/2)
+    # Swap time and frequency axes
+    spec = spec.T
+    # Stack the windows [T-2, T-1, T, T+1, T+2] as channels for Tth feature
+    overlap = 2
+    n_wins = spec.shape[0]
+    spec = np.pad(spec, [(overlap, overlap), (0, 0)], mode='constant')
+    spec = spec[np.arange(n_wins)[:, None] + np.arange(overlap*2+1)]
+    # Separate and concat real and imaginary parts as channels
+    spec = np.concatenate([np.real(spec), np.imag(spec)], axis=1)
+    return spec
+
+def spec_to_wav(spec, rate):
+    """Convert stacked spectrogram produced by wav_to_spec back to wav."""
+    import scipy.signal
+    # Convert back to complex-valued numpy array
+    spec = spec[:,:spec.shape[1]/2] + spec[:,spec.shape[1]/2:] * 1j
+    # Undo overlapping of windows by picking central value
+    overlap = 2
+    spec = spec[:,overlap,:]
+    # Swap time and frequency axes
+    spec = spec.T
+    # Do inverse Fourier transform
+    win_sz = rate / fps * 2
+    t, wav = scipy.signal.istft(spec, rate, nperseg=win_sz, noverlap=win_sz/2)
+    return wav
 
 def test_dataset(data_dir='./vidTIMIT', stats=False):
     print("Loading data...")
@@ -191,7 +190,7 @@ def test_dataset(data_dir='./vidTIMIT', stats=False):
             print("Std:", m_std[m])
             print("Max:", m_max[m])
             print("Min:", m_min[m])
-            
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()

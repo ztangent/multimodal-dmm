@@ -42,28 +42,11 @@ def download_weizmann(dest='./weizmann'):
     src_url = ('http://www.wisdom.weizmann.ac.il/~vision/' +
                'VideoAnalysis/Demos/SpaceTimeActions/DB/')
 
-    import requests, zipfile
-    import scipy.io, skvideo.io
-    from tqdm import tqdm
-
-    def download(filename, source, dest):
-        print("Downloading '{}'...".format(filename))
-        url = source + filename
-        try:
-            with open(os.path.join(dest, filename), 'ab') as f:
-                headers = {}
-                pos = f.tell()
-                if pos:
-                    headers['Range'] = 'bytes={}-'.format(pos)
-                resp = requests.get(url, headers=headers, stream=True)
-                total_size = resp.headers.get('content-length', None)
-                total = int(total_size)//1024 if total_size else None
-                for data in tqdm(iterable=resp.iter_content(chunk_size=512),
-                                 total=total, unit='KB'):
-                    f.write(data)
-        except requests.exceptions.RequestException:
-            print("\nError downloading, attempting to resume...")
-            download(filename, source, dest)
+    if __name__ == '__main__':
+        import utils
+    else:
+        from . import utils
+    import zipfile, scipy.io, skvideo.io
 
     # Use FFMPEG to crop from 180x144 to 128x128, then resize to 64x64
     ffmpeg_params = {'-s': '64x64',
@@ -73,7 +56,7 @@ def download_weizmann(dest='./weizmann'):
     if not os.path.exists(dest):
         os.mkdir(dest)
     if not os.path.exists(os.path.join(dest, 'classification_masks.mat')):
-        download('classification_masks.mat', source=src_url, dest=dest)
+        utils.download('classification_masks.mat', source=src_url, dest=dest)
     masks = scipy.io.loadmat(os.path.join(dest, 'classification_masks.mat'))
     masks = masks['original_masks'][0,0]
 
@@ -81,7 +64,7 @@ def download_weizmann(dest='./weizmann'):
     for act in actions:
         zip_path = os.path.join(dest, act + '.zip')
         if not os.path.exists(zip_path):
-            download(act + '.zip', source=src_url, dest=dest)
+            utils.download(act + '.zip', source=src_url, dest=dest)
         with zipfile.ZipFile(zip_path, "r") as f:
             vid_names = [vn for vn in f.namelist() if vn[-3:] == 'avi']
             print("Extracting '{}' videos... ({} files)".\
