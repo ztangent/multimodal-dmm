@@ -6,10 +6,10 @@ Generalizes the Multimodal Variational Auto-Encoder (MVAE) by [Wu & Goodman](htt
 
 ## Setup
 
-After creating a virtual environment with `virtualenv` or `conda`, one can simply install the dependencies in `requirements.txt`. (Currently written in Python 2.7, but should be almost entirely compatible with Python 3.)
+After creating a virtual environment with `virtualenv` or `conda`, one can simply install the dependencies in `requirements.txt`. Compatible with both Python 2.7 and Python 3.
 
 ```
-virtualenv -p python2 venv
+virtualenv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -45,7 +45,7 @@ The `models` subdirectory contains three different inference methods that can be
 
 - `dks.py` implements the MDMM with the RNN-based structured inference networks described by [Krishnan et al](https://www.aaai.org/ocs/index.php/AAAI/AAAI17/paper/view/14215). By providing different options to the constructor, one can use either forward or backward RNN networks, and toggle different methods for handling missing data. Refer to the docstrings for details.
 
-- `vrnn.py` implements a multimodal version of the Variational Recurrent Neural Network (VRNN) described by [Chung et al](https://papers.nips.cc/paper/5653-a-recurrent-latent-variable-model-for-sequential-data). This is similar to using `dks.py` with a forward RNN. (Not recently tested to work.)
+- `vrnn.py` implements a multimodal version of the Variational Recurrent Neural Network (VRNN) described by [Chung et al](https://papers.nips.cc/paper/5653-a-recurrent-latent-variable-model-for-sequential-data). This is similar to using `dks.py` with a forward RNN.
 
 ## Training
 
@@ -64,6 +64,14 @@ An abstract `Trainer` class can be found in `trainer.py`, allowing training code
 ## Experiments
 
 Ray Tune can be used to easily run experiments across multiple sets of hyper-parameters over multiple trials. Make sure `ray` is installed for this to work. Install `tensorboard` and `tensorflow` as well if you would like to visualize the loss curves via Tensorboard.
+
+### Comparing different inference methods on a range of tasks
+
+For the Spirals dataset:
+```python -m experiments.spirals_suite --trial_cpus N --trial_gpus N```
+
+For the Weizmann dataset:
+```python -m experiments.weizmann_suite --trial_cpus N --trial_gpus N```
 
 ### Learning with uniformly random missing data
 
