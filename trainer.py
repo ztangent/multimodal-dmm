@@ -158,6 +158,10 @@ class Trainer(object):
         # Pre-process args
         args = self.pre_build_args(args)
 
+        # Create path to save models/predictions
+        if not os.path.exists(args.save_dir):
+            os.makedirs(args.save_dir)
+
         # Load model if specified, or test/feature flags are set
         checkpoint = None
         if args.load is not None:
@@ -479,10 +483,6 @@ class Trainer(object):
         test_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=True)
-
-        # Create path to save models/predictions
-        if not os.path.exists(args.save_dir):
-            os.makedirs(args.save_dir)
 
         # Train and save best model
         best_loss = float('inf')

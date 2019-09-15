@@ -1,3 +1,8 @@
+# Datasets specific to this repository
+datasets/spirals/
+datasets/weizmann/
+datasets/vidTIMIT/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
