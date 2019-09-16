@@ -349,7 +349,7 @@ class Trainer(object):
                     "rnn_skip" : 'skip' in args.method,
                     "rnn_dir" : 'bwd' if args.method[0] == 'b' else 'fwd'
                 }
-        else:
+        else if args.method is not None:
             print("Ignoring unknown inference method '{}'".format(args.method))
         return args
 
