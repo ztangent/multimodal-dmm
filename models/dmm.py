@@ -364,13 +364,13 @@ class MultiDMM(MultiDGTS):
         samples = []
 
         # Reverse inputs in time if direction is backward
-        rv = ( (lambda x : reversed(x)) if direction == 'bwd'
+        rv = ( (lambda x : list(reversed(x))) if direction == 'bwd'
                else (lambda x : x) )
 
         # Setup global (i.e. time-invariant) prior on z
         glb_mean, glb_std, _ = self.prior((b_dim, 1))
 
-        for t in rv(range(t_max)):
+        for t in rv(list(range(t_max))):
             prior_mask_t =\
                 torch.ones((b_dim,), dtype=torch.uint8).to(self.device)
             if len(samples) == 0:
