@@ -43,7 +43,7 @@ def run(args):
     if args.max_gpus is None:
         import torch
         args.max_gpus = min(1, torch.cuda.device_count() - 1)
-    
+
     ray.init(num_cpus=args.max_cpus, num_gpus=args.max_gpus)
 
     # Convert data dir to absolute path so that Ray trials can find it
@@ -53,7 +53,7 @@ def run(args):
     config = {
         "data_dir": data_dir,
         # Save minimally to consume less disk space
-	"save_freq": 300,
+        "save_freq": 50,
         # Set low learning rate to prevent NaNs
         "lr": 5e-4,
         # Only train on videos and actions
@@ -90,7 +90,7 @@ def analyze(args):
     ea = ExperimentAnalysis(exp_dir)
     df = ea.dataframe().sort_values(['trial_id'])
     best_results = {'del_frac': [], 'loss': [], 'ssim': [], 'action': []}
-    
+
     # Iterate across trials
     for i, trial in df.iterrows():
         print("Trial:", trial['experiment_tag'])
@@ -100,7 +100,7 @@ def analyze(args):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:semi']
-        best_idx = trial_df.mean_loss.idxmin() 
+        best_idx = trial_df.mean_loss.idxmin()
         best_loss, best_ssim, best_act_acc =\
             trial_df[['mean_loss', 'ssim', 'action']].iloc[best_idx]
         print("Best loss:", best_loss)
@@ -115,21 +115,22 @@ def analyze(args):
         best_results['action'].append(best_act_acc)
 
     # Compute average of the best 3 runs per deletion fraction
-    best_results = pd.DataFrame(best_results).sort_values(by='del_frac')
-    best_results = best_results.groupby('del_frac').nsmallest(3)
-    best_std = best_results.std()
-    best_mean = best_results.mean()
-    print('--Std--')
-    print(best_std)
+    best_results = pd.DataFrame(best_results).sort_values(by='loss')
+    best_results = best_results.groupby('del_frac').head(3)
+    best_std = best_results.groupby('del_frac').std()
+    best_mean = best_results.groupby('del_frac').mean()
     print('--Mean--')
     print(best_mean)
+    print('--Std--')
+    print(best_std)
 
     # Save results to CSV file
     best_mean.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
-        
+    # Save results to CSV file
+    best_std.to_csv(os.path.join(exp_dir, 'best_results_std.csv'), index=False)
+
 if __name__ == "__main__":
     args = parser.parse_args()
     if not args.analyze:
         run(args)
     analyze(args)
-

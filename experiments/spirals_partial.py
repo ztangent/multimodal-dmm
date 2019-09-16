@@ -43,12 +43,12 @@ def run(args):
     if args.max_gpus is None:
         import torch
         args.max_gpus = min(1, torch.cuda.device_count() - 1)
-    
+
     ray.init(num_cpus=args.max_cpus, num_gpus=args.max_gpus)
 
     # Convert data dir to absolute path so that Ray trials can find it
     data_dir = os.path.abspath(SpiralsTrainer.defaults['data_dir'])
-            
+
     # Set up trial configuration
     config = {
         "data_dir": data_dir,
@@ -59,10 +59,10 @@ def run(args):
         # Iterate over uniform data deletion in 10% steps
         "corrupt": tune.grid_search([{'uniform': i/10} for i in range(10)])
     }
-    
+
     # Update config with parameters from command line
     config.update(args.config)
-    
+
     # Register trainable and run trials
     trainable = lambda c, r : SpiralsTrainer.tune(c, r)
     tune.register_trainable("spirals_tune", trainable)
@@ -80,8 +80,8 @@ def analyze(args):
     exp_dir = os.path.join(args.local_dir, args.exp_name)
     ea = ExperimentAnalysis(exp_dir)
     df = ea.dataframe().sort_values(['trial_id'])
-    losses = dict()
-    
+    best_results = {'del_frac': [], 'loss': [], 'mse': [], 'rec_loss': []}
+
     # Iterate across trials
     for i, trial in df.iterrows():
         print("Trial:", trial['experiment_tag'])
@@ -91,29 +91,35 @@ def analyze(args):
             print("No progress data to read for trial, skipping...")
             continue
         del_frac = trial['config:corrupt:uniform']
-        best_loss = trial_df.mean_loss.min()
+        best_idx = trial_df.mean_loss.idxmin()
+        best_loss, best_mse, best_rec_loss =\
+            trial_df[['mean_loss', 'mse', 'rec_loss']].iloc[best_idx]
         print("Best loss:", best_loss)
+        print("Best MSE:", best_mse)
+        print("Best recon loss:", best_rec_loss)
         print("---")
 
-        # Store best loss for each trial and each level of deletion
-        if del_frac not in losses:
-            losses[del_frac] = []
-        losses[del_frac].append(best_loss)
+        # Store best results for each trial
+        best_results['del_frac'].append(del_frac)
+        best_results['loss'].append(best_loss)
+        best_results['mse'].append(best_mse)
+        best_results['rec_loss'].append(best_rec_loss)
 
-    # Print average of the best 3 losses per deletion fraction
-    print("del_frac\tloss")
-    del_fracs = sorted(losses.keys())
-    for del_frac in del_fracs:
-        best_losses = sorted(losses[del_frac])[:3]
-        losses[del_frac] = sum(best_losses) / 3
-        print("{}\t\t{:0.3f}".format(del_frac, losses[del_frac]))
+    # Compute average of the best 3 runs per deletion fraction
+    best_results = pd.DataFrame(best_results).sort_values(by='loss')
+    best_results = best_results.groupby('del_frac').head(3)
+    best_std = best_results.groupby('del_frac').std()
+    best_mean = best_results.groupby('del_frac').mean()
+    print('--Mean--')
+    print(best_mean)
+    print('--Std--')
+    print(best_std)
 
-    # Save losses to CSV file
-    losses_df = pd.DataFrame.from_dict(losses, orient='index',
-                                       columns=['loss']).sort_index()
-    losses_df.index.name = 'del_frac'
-    losses_df.to_csv(os.path.join(exp_dir, 'best_losses.csv'))
-        
+    # Save results to CSV file
+    best_mean.to_csv(os.path.join(exp_dir, 'best_results.csv'), index=False)
+    # Save results to CSV file
+    best_std.to_csv(os.path.join(exp_dir, 'best_results_std.csv'), index=False)
+
 if __name__ == "__main__":
     args = parser.parse_args()
     if not args.analyze:

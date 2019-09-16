@@ -38,10 +38,10 @@ class WeizmannTrainer(trainer.Trainer):
     # Set parameter defaults for Weizmann dataset
     defaults = {
         'modalities' : ['video', 'person', 'action'],
-        'batch_size' : 50, 'split' : 25, 'bylen' : True,
-        'epochs' : 3000, 'lr' : 5e-4,
+        'batch_size' : 25, 'split' : 25, 'bylen' : True,
+        'epochs' : 500, 'lr' : 5e-4,
         'rec_mults' : {'video': 1, 'mask': 1, 'person': 10, 'action': 10},
-        'kld_anneal' : 1500, 'burst_frac' : 0.2,
+        'kld_anneal' : 250, 'burst_frac' : 0.2,
         'drop_frac' : 0.5, 'start_frac' : 0, 'stop_frac' : 1,
         'eval_metric' : 'rec_loss', 'viz_metric' : 'ssim',
         'eval_freq' : 10, 'save_freq' : 10,
