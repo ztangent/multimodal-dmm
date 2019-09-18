@@ -173,3 +173,118 @@ class ImageDecoder(nn.Module):
         feats = self.z_to_feat(z).view(-1, *self.feat_shape)
         probs = self.deconv_stack(feats)
         return (probs,)
+
+class AudioConv(nn.Module):
+    """1D convolutional layer with optional batch norm and ReLU."""
+    def __init__(self, n_channels, n_kernels,
+                 kernel_size=3, stride=2, padding=1, last=False):
+        super(AudioConv, self).__init__()
+        self.conv = nn.Conv1d(
+            n_channels, n_kernels,
+            kernel_size, stride, padding
+        )
+        if not last:
+            self.net = nn.Sequential(
+                self.conv,
+                nn.BatchNorm1d(n_kernels),
+                nn.ReLU()
+            )
+        else:
+            self.net = self.conv
+        nn.init.xavier_uniform_(self.conv.weight)
+
+    def forward(self, x):
+        return self.net(x)
+
+class AudioDeconv(nn.Module):
+    """1D de-convolutional layer with optional batch norm and ReLU."""
+    def __init__(self, n_channels, n_kernels,
+                 kernel_size=3, stride=2, padding=1, last=False):
+        super(AudioDeconv, self).__init__()
+        self.deconv = nn.ConvTranspose1d(
+            n_channels, n_kernels,
+            kernel_size, stride, padding
+        )
+        if not last:
+            self.net = nn.Sequential(
+                self.deconv,
+                nn.BatchNorm1d(n_kernels),
+                nn.ReLU()
+            )
+        else:
+            self.net = self.deconv
+        nn.init.xavier_uniform_(self.deconv.weight)
+
+    def forward(self, x):
+        return self.net(x)
+
+class AudioEncoder(nn.Module):
+    """Convolutional encoder for audio spectrogram slices."""
+    def __init__(self, z_dim, gauss_out=True,
+                 n_freqs=1281, n_frames=5, n_kernels=16, n_layers=3):
+        super(AudioEncoder, self).__init__()
+        # Compute final feature size assuming n_freqs = k*2^n +1 for some n, k
+        self.feat_size = (n_freqs-1) // 2**n_layers +1
+        self.feat_dim = self.feat_size * n_kernels
+        # Channel number is twice the number of time frames (real + imag)
+        n_channels = n_frames * 2
+
+        self.conv_stack = nn.Sequential(
+            *([AudioConv(n_channels, n_kernels // 2**(n_layers-1))] +
+              [AudioConv(n_kernels//2**(n_layers-l),
+                         n_kernels//2**(n_layers-l-1))
+               for l in range(1, n_layers-1)] +
+              [AudioConv(n_kernels // 2, n_kernels, last=True)])
+        )
+
+        self.gauss_out = gauss_out
+        if gauss_out:
+            self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
+            self.feat_to_z_std = nn.Sequential(
+                nn.Linear(self.feat_dim, z_dim),
+                nn.Softplus()
+            )
+
+            nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
+            nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
+
+    def forward(self, x):
+        feats = self.conv_stack(x)
+        if not self.gauss_out:
+            return feats
+        z_mean = self.feat_to_z_mean(feats.view(-1, self.feat_dim))
+        z_std = self.feat_to_z_std(feats.view(-1, self.feat_dim))
+        return z_mean, z_std
+
+class AudioDecoder(nn.Module):
+    """De-convolutional decoder for audio spectrogram slices."""
+    def __init__(self, z_dim,
+                 n_freqs=1281, n_frames=5, n_kernels=16, n_layers=3):
+        super(AudioDecoder, self).__init__()
+        # Compute final feature size assuming n_freqs = k*2^n +1 for some n, k
+        self.feat_size = (n_freqs-1) // 2**n_layers +1
+        self.feat_dim = self.feat_size * n_kernels
+        self.feat_shape = (n_kernels, self.feat_size)
+        # Channel number is twice the number of time frames (real + imag)
+        n_channels = n_frames * 2
+
+        self.z_to_feat = nn.Sequential(
+            nn.Linear(z_dim, self.feat_dim),
+            nn.ReLU()
+        )
+
+        self.deconv_stack = nn.Sequential(
+            *([AudioDeconv(n_kernels // 2**l, n_kernels // 2**(l+1))
+               for l in range(n_layers-1)] +
+              [AudioDeconv(n_kernels // 2**(n_layers-1),
+                           n_channels, last=True)] +
+              [nn.Sigmoid()]
+            )
+        )
+
+        nn.init.xavier_uniform_(self.z_to_feat[0].weight)
+
+    def forward(self, z):
+        feats = self.z_to_feat(z).view(-1, *self.feat_shape)
+        probs = self.deconv_stack(feats)
+        return (probs,)
