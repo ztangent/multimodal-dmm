@@ -131,32 +131,48 @@ def preprocess_video(video):
 def wav_to_spec(wav, rate):
     """Convert to spectrogram using 25 windows per second."""
     import scipy.signal
+    # Use window size of 2 * 32000 / 25 = 2560
     win_sz = rate / fps * 2
     # Perform Short Time Fourier Transform (STFT)
     f, t, spec = scipy.signal.stft(wav, rate, nperseg=win_sz, noverlap=win_sz/2)
     # Swap time and frequency axes
     spec = spec.T
-    # Stack the windows [T-2, T-1, T, T+1, T+2] as channels for Tth feature
+    # Stack the frames [T-2, T-1, T, T+1, T+2] as channels for Tth feature
     overlap = 2
     n_wins = spec.shape[0]
     spec = np.pad(spec, [(overlap, overlap), (0, 0)], mode='constant')
     spec = spec[np.arange(n_wins)[:, None] + np.arange(overlap*2+1)]
-    # Separate and concat real and imaginary parts as channels
-    spec = np.concatenate([np.real(spec), np.imag(spec)], axis=1)
+    # Compute magnitude and phase
+    mag, phase = np.abs(spec), np.angle(spec)
+    # Logarithmically scale and normalize magnitude to [0, 1]
+    eps = 1e-7 # Small constant to prevent taking the log of 0
+    max_mag = win_sz * 2 # Maximum magnitude is 2*nperseg
+    mag = (np.log(mag+eps)-np.log(eps)) / (np.log(max_mag+eps)-np.log(eps))
+    # Normalize phase
+    phase = (phase + np.pi) / (2 * np.pi)
+    # Concat magnitude and phase along channel dimension
+    spec = np.concatenate([mag, phase], axis=1)
     return spec
 
 def spec_to_wav(spec, rate):
     """Convert stacked spectrogram produced by wav_to_spec back to wav."""
     import scipy.signal
+    win_sz = rate / fps * 2
+    # Separate phase and magnitude, convert back to original range
+    eps = 1e-7 # Small constant to add back
+    max_mag = win_sz * 2 # Maximum magnitude is nperseg
+    mag = spec[:,:spec.shape[1]/2]
+    mag = np.exp(mag * (np.log(max_mag+eps)-np.log(eps)) + np.log(eps)) + eps
+    phase = spec[:,spec.shape[1]/2:]
+    phase = phase * (2 * np.pi) - np.pi
     # Convert back to complex-valued numpy array
-    spec = spec[:,:spec.shape[1]/2] + spec[:,spec.shape[1]/2:] * 1j
+    spec = mag*np.cos(phase) + mag*np.sin(phase)*1j
     # Undo overlapping of windows by picking central value
     overlap = 2
     spec = spec[:,overlap,:]
     # Swap time and frequency axes
     spec = spec.T
     # Do inverse Fourier transform
-    win_sz = rate / fps * 2
     t, wav = scipy.signal.istft(spec, rate, nperseg=win_sz, noverlap=win_sz/2)
     return wav
 
