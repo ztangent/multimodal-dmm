@@ -1,4 +1,4 @@
-"""Training code for the Weizmann human action dataset."""
+"""Training code for the vidTIMIT audio-visual dataset."""
 
 from __future__ import division
 from __future__ import print_function
@@ -14,19 +14,15 @@ import cv2 as cv
 import matplotlib
 import matplotlib.pyplot as plt
 
-from datasets import weizmann
+from datasets import vidTIMIT
 from utils import eval_ssim
 import models
 import trainer
 
-class WeizmannTrainer(trainer.Trainer):
-    """Class for training on the Weizmann human action dataset."""
+class VidTIMITTrainer(trainer.Trainer):
+    """Class for training on the vidTIMIT human action dataset."""
 
     parser = copy.copy(trainer.Trainer.parser)
-
-    # Add these arguments specifically for the Weizmann dataset
-    parser.add_argument('--viz_mod', type=str, default='video', metavar='M',
-                        help='image modality to visualize')
 
     # Rewrite split help function to be more clear
     for action in parser._actions:
@@ -35,38 +31,33 @@ class WeizmannTrainer(trainer.Trainer):
         action.help = 'split each training sequence into L-sized chunks'
         action.metavar = 'L'
 
-    # Set parameter defaults for Weizmann dataset
+    # Set parameter defaults for VidTIMIT dataset
     defaults = {
         'modalities' : ['video', 'person', 'action'],
         'batch_size' : 25, 'split' : 25, 'bylen' : True,
         'epochs' : 500, 'lr' : 5e-4,
-        'rec_mults' : {'video': 1, 'mask': 1, 'person': 10, 'action': 10},
+        'rec_mults' : {'video': 1, 'audio': 1},
         'kld_anneal' : 250, 'burst_frac' : 0.2,
         'drop_frac' : 0.5, 'start_frac' : 0, 'stop_frac' : 1,
         'eval_metric' : 'rec_loss', 'viz_metric' : 'ssim',
         'eval_freq' : 10, 'save_freq' : 10,
-        'data_dir' : './datasets/weizmann',
-        'save_dir' : './weizmann_save'
+        'data_dir' : './datasets/vidTIMIT',
+        'save_dir' : './vidTIMIT_save'
     }
     parser.set_defaults(**defaults)
 
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
-        dims = {'video': (3, 64, 64), 'mask': (1, 64, 64),
-                'person': 10, 'action': 10}
-        dists = {'video': 'Bernoulli',
-                 'mask': 'Bernoulli',
-                 'person': 'Categorical',
-                 'action': 'Categorical'}
+        dims = {'video': (3, 64, 64), 'audio': (10, 1281)}
+        dists = {'video': 'Bernoulli', 'audio': 'Bernoulli'}
         z_dim = args.model_args.get('z_dim', 256)
         h_dim = args.model_args.get('h_dim', 256)
         gauss_out = (args.model != 'MultiDKS')
         encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out),
-                    'mask': models.common.ImageEncoder(z_dim, gauss_out,
-                                                       n_channels=1)}
+                    'audio': models.common.AudioEncoder(z_dim, gauss_out)}
         decoders = {'video': models.common.ImageDecoder(z_dim),
-                    'mask': models.common.ImageDecoder(z_dim, n_channels=1)}
-        custom_mods = [m for m in ['video', 'mask'] if m in args.modalities]
+                    'audio': models.common.AudioDecoder(z_dim)}
+        custom_mods = [m for m in ['video', 'audio'] if m in args.modalities]
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],
                             dists=[dists[m] for m in args.modalities],
@@ -78,11 +69,9 @@ class WeizmannTrainer(trainer.Trainer):
 
     def pre_build_args(self, args):
         """Process args before model is constructed."""
-        args = super(WeizmannTrainer, self).pre_build_args(args)
+        args = super(VidTIMITTrainer, self).pre_build_args(args)
         # Set up method specific model and training args
         if args.method in ['b-skip', 'f-skip', 'b-mask', 'f-mask']:
-            # Create direct connection from features to z in encoder
-            args.model_args['feat_to_z'] = True
             # Use both unimodal and multimodal ELBO training loss
             args.train_args['uni_loss'] = True
         return args
@@ -98,11 +87,11 @@ class WeizmannTrainer(trainer.Trainer):
     def load_data(self, modalities, args):
         print("Loading data...")
         data_dir = os.path.abspath(args.data_dir)
-        all_data = weizmann.WeizmannDataset(data_dir, item_as_dict=True)
-        # Leave one person out of training set
-        train_data = all_data.select([['shahar'], None], invert=True)
+        all_data = vidTIMIT.VidTIMITDataset(data_dir, item_as_dict=True)
+        # Split into train and test set
+        train_data = all_data.select([None, ['sa1', 'sa2']], invert=True)
         # Test on left out person
-        test_data = all_data.select([['shahar'], None])
+        test_data = all_data.select([None, ['sa1', 'sa2']])
         print("Done.")
         if len(args.normalize) > 0:
             print("Normalizing ", args.normalize, "...")
@@ -128,40 +117,23 @@ class WeizmannTrainer(trainer.Trainer):
 
         # Compute video mean squared error and SSIM for each timestep
         rec_vid, tgt_vid = recon['video'][0], targets['video']
-        mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
-        mse = mse.sum(dim=list(range(2, mse.dim())))
+        v_mse = ((rec_vid - tgt_vid).pow(2) / rec_vid[0,0].numel())
+        v_mse = v_mse.sum(dim=list(range(2, v_mse.dim())))
         ssim = eval_ssim(rec_vid.flatten(0, 1), tgt_vid.flatten(0, 1))
         ssim = ssim.view(t_max, b_dim)
 
         # Compute mask mean squared error and SSIM for each timestep
-        if 'mask' in recon:
-            rec_mask, tgt_mask = recon['mask'][0], targets['mask']
-            m_mse = ((rec_mask - tgt_mask).pow(2) / rec_mask[0,0].numel())
-            m_mse = m_mse.sum(dim=list(range(2, m_mse.dim())))
-            m_ssim = eval_ssim(rec_mask.flatten(0, 1),
-                               tgt_mask.flatten(0, 1))
-            m_ssim = m_ssim.view(t_max, b_dim)
+        rec_audio, tgt_audio = recon['audio'][0], targets['audio']
+        a_mse = ((rec_audio - tgt_audio).pow(2) / rec_audio[0,0].numel())
+        a_mse = a_mse.sum(dim=list(range(2, a_mse.dim())))
 
         # Average across timesteps, for each sequence
         def time_avg(val):
             val[1 - mask.squeeze(-1)] = 0.0
             return val.sum(dim = 0) / lengths
-        metrics['mse'] = time_avg(mse)[order].tolist()
+        metrics['v_mse'] = time_avg(v_mse)[order].tolist()
         metrics['ssim'] = time_avg(ssim)[order].tolist()
-        if 'mask' in recon:
-            metrics['m_mse'] = time_avg(m_mse)[order].tolist()
-            metrics['m_ssim'] = time_avg(m_ssim)[order].tolist()
-
-        # Compute prediction accuracy over time for action and person labels
-        def time_acc(probs, targets):
-            correct = (probs.argmax(dim=-1) == targets.squeeze(-1).long())
-            return correct.sum(dim=0).float() / lengths
-        for m in ['action', 'person']:
-            if m not in recon:
-                metrics[m] = [0] * b_dim
-                continue
-            metrics[m] = time_acc(recon[m][0], targets[m])
-            metrics[m] = metrics[m][order].tolist()
+        metrics['a_mse'] = time_avg(a_mse)[order].tolist()
 
         return metrics
 
@@ -179,14 +151,10 @@ class WeizmannTrainer(trainer.Trainer):
         print('Evaluation\tKLD: {:7.1f}\tRecon: {:7.1f}'.\
               format(summary['kld_loss'], summary['rec_loss']))
         print('\tVideo\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
-              format(summary['mse'], summary['mse_std'],
+              format(summary['v_mse'], summary['v_mse_std'],
                      summary['ssim'], summary['ssim_std']))
-        print('\tMask\tMSE: {:2.3f} +/- {:2.3f}\tSSIM: {:2.3f} +/- {:2.3f}'.\
-              format(summary['m_mse'], summary['m_mse_std'],
-                     summary['m_ssim'], summary['m_ssim_std']))
-        print('\t\tAct: {:2.3f} +/- {:2.3f}\tPers: {:2.3f} +/- {:2.3f}'.\
-              format(summary['action'], summary['action_std'],
-                     summary['person'], summary['person_std']))
+        print('\tAudio\tMSE: {:2.3f} +/- {:2.3f}'.\
+              format(summary['a_mse'], summary['a_mse_std']))
         return summary
 
     def visualize(self, results, metric, args):
@@ -196,7 +164,7 @@ class WeizmannTrainer(trainer.Trainer):
         predicted = results['recon']
 
         # Get image modality to visualize
-        viz_mod = 'video' if not hasattr(args, 'viz_mod') else args.viz_mod
+        viz_mod = 'video'
 
         # Select best and worst predictions
         sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
@@ -205,13 +173,6 @@ class WeizmannTrainer(trainer.Trainer):
         sel_true = [reference[viz_mod][i] for i in sel_idx]
         sel_obsv = [observed[viz_mod][i] for i in sel_idx]
         sel_pred = [predicted[viz_mod][i][:,0] for i in sel_idx]
-
-        sel_true_act = [reference['action'][i] for i in sel_idx]
-        sel_obsv_act = [observed['action'][i] for i in sel_idx]
-        if 'action' in predicted:
-            sel_pred_act = [predicted['action'][i][:,0] for i in sel_idx]
-        else:
-            sel_pred_act = [None] * len(sel_idx)
 
         if not hasattr(args, 'fig'):
             # Create figure to visualize predictions
@@ -245,8 +206,6 @@ class WeizmannTrainer(trainer.Trainer):
 
         for i in range(len(sel_idx)):
             true, obsv, pred = sel_true[i], sel_obsv[i], sel_pred[i]
-            t_act, o_act, p_act =\
-                (sel_true_act[i], sel_obsv_act[i], sel_pred_act[i])
 
             # Stitch equally-spaced frames into a storyboard row
             times = np.linspace(0, len(true)-1, 8, dtype=int)
@@ -257,24 +216,18 @@ class WeizmannTrainer(trainer.Trainer):
             # Set missing observations to white
             obsv_board[np.isnan(obsv_board)] = 1.0
 
-            # Read predicted action names
-            pred_probs = p_act.max(axis=1)
-            p_act = [weizmann.actions[a] for a in p_act.argmax(axis=1)]
-            t_labels = [weizmann.actions[int(t_act[t])] for t in times]
-            o_labels = ['' if (o_act[t] != o_act[t]) else
-                        weizmann.actions[int(o_act[t])] for t in times]
-            p_labels = ['{} ({:0.1f})'.format(p_act[t], pred_probs[t])
-                        for t in times]
+            # Remove tick labels
+            labels = ['' for t in times]
 
             # Plot original video
             plt.sca(axes[3*i])
-            plot_board(true_board, t_labels, "Original")
+            plot_board(true_board, labels, "Original")
             # Plot observations
             plt.sca(axes[3*i+1])
-            plot_board(obsv_board, o_labels, "Observed")
+            plot_board(obsv_board, labels, "Observed")
             # Plot reconstructed video
             plt.sca(axes[3*i+2])
-            plot_board(pred_board, p_labels, "Reconstructed")
+            plot_board(pred_board, labels, "Reconstructed")
 
             # Display metric as title on top of original video
             axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
@@ -294,103 +247,9 @@ class WeizmannTrainer(trainer.Trainer):
 
     def save_results(self, results, args):
         """Save results to video."""
-        print("Saving results...")
-        reference = results['targets']
-        observed = results['inputs']
-        predicted = results['recon']
-
-        # Default save args
-        save_args = {'one_file': True,
-                     'filename': args.eval_set + '.avi',
-                     'labels': True,
-                     'comparison': True}
-        save_args.update(args.save_args)
-
-        # Define frame rate and video dimensions
-        shape = reference['video'][0].shape[2:4]
-        if save_args['comparison']:
-            shape = (shape[0]*3, shape[1])
-        fps = weizmann.fps
-
-        # Create video writer for single output file
-        if save_args['one_file']:
-            path = os.path.join(args.save_dir, save_args['filename'])
-            vwriter = cv.VideoWriter(path, 0, fps, shape)
-
-        # Helper functions
-        def preprocess(frame):
-            return cv.cvtColor((frame * 255).astype('uint8'),
-                               cv.COLOR_RGB2BGR)
-        def add_label(image, text, pos):
-            cv.putText(image, text, pos, cv.FONT_HERSHEY_SIMPLEX,
-                       0.4, (255, 255, 255), 1, cv.LINE_AA)
-
-        # Iterate over videos
-        for i in range(len(reference['video'])):
-            # Transpose videos to T * H * W * C
-            r_vid = reference['video'][i].transpose((0,2,3,1))
-            o_vid = observed['video'][i].transpose((0,2,3,1))
-            p_vid = predicted['video'][i][:,0].transpose((0,2,3,1))
-
-            if not save_args['one_file']:
-                # Construct file name as [person]_[action].avi
-                p_id, a_id =\
-                    (reference['person'][i][0], reference['action'][i][0])
-                person = weizmann.persons[int(p_id)]
-                action = weizmann.actions[int(a_id)]
-                path = '{}_{}.avi'.format(person, action)
-                path = os.path.join(args.save_dir, path)
-                # Create video writer for file
-                vwriter = cv.VideoWriter(path, 0, fps, shape)
-
-            # Iterate over frames
-            for t in range(len(p_vid)):
-                frame = preprocess(p_vid[t])
-                if save_args['labels']:
-                    # Add text labels
-                    if 'action' in predicted:
-                        probs = predicted['action'][i][t,0]
-                        text = weizmann.actions[np.argmax(probs)]
-                        add_label(frame, text, (2, 10))
-                    if 'person' in predicted:
-                        probs = predicted['person'][i][t,0]
-                        text = weizmann.persons[np.argmax(probs)]
-                        add_label(frame, text, (2, 60))
-
-                if not save_args['comparison']:
-                    vwriter.write(frame)
-                    continue
-
-                # Combine frames for side-by-side comparison
-                p_frame = frame
-                r_frame, o_frame = preprocess(r_vid[t]), preprocess(o_vid[t])
-                if save_args['labels']:
-                    # Add text labels
-                    r_idx = reference['action'][i][t]
-                    o_idx = observed['action'][i][t]
-                    r_text = weizmann.actions[int(r_idx)]
-                    add_label(r_frame, r_text, (2, 10))
-                    if o_idx == o_idx: #NaN check
-                        o_text = weizmann.actions[int(o_idx)]
-                        add_label(o_frame, o_text, (2, 10))
-
-                    r_idx = reference['person'][i][t]
-                    o_idx = observed['person'][i][t]
-                    r_text = weizmann.persons[int(r_idx)]
-                    add_label(r_frame, r_text, (2, 60))
-                    if o_idx == o_idx: #NaN check
-                        o_text = weizmann.persons[int(o_idx)]
-                        add_label(o_frame, o_text, (2, 60))
-                frame = np.hstack([r_frame, o_frame, p_frame])
-                vwriter.write(frame)
-
-            if not save_args['one_file']:
-                vwriter.release()
-
-        if save_args['one_file']:
-            vwriter.release()
+        pass
 
 if __name__ == "__main__":
-    args = WeizmannTrainer.parser.parse_args()
-    trainer = WeizmannTrainer(args)
+    args = VidTIMITTrainer.parser.parse_args()
+    trainer = VidTIMITTrainer(args)
     trainer.run(args)
