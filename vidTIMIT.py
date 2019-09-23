@@ -163,21 +163,16 @@ class VidTIMITTrainer(trainer.Trainer):
         observed = results['inputs']
         predicted = results['recon']
 
-        # Get image modality to visualize
-        viz_mod = 'video'
-
         # Select best and worst predictions
         sel_idx = np.concatenate((np.argsort(metric)[-1:][::-1],
                                   np.argsort(metric)[:1]))
         sel_metric = [metric[i] for i in sel_idx]
-        sel_true = [reference[viz_mod][i] for i in sel_idx]
-        sel_obsv = [observed[viz_mod][i] for i in sel_idx]
-        sel_pred = [predicted[viz_mod][i][:,0] for i in sel_idx]
 
         if not hasattr(args, 'fig'):
             # Create figure to visualize predictions
             args.fig, args.axes = plt.subplots(
-                nrows=3*len(sel_idx), ncols=1, figsize=(8,4*len(sel_idx)+0.5),
+                nrows=3*len(sel_idx), ncols=2,
+                figsize=(12,4*len(sel_idx)+0.5),
                 subplot_kw={'aspect': 'equal'})
         else:
             # Set current figure
@@ -204,8 +199,11 @@ class VidTIMITTrainer(trainer.Trainer):
             plt.ylabel(y_label)
             plt.gca().tick_params(length=0)
 
+        # Plot video storyboards in first column
         for i in range(len(sel_idx)):
-            true, obsv, pred = sel_true[i], sel_obsv[i], sel_pred[i]
+            true = reference['video'][sel_idx[i]]
+            obsv = observed['video'][sel_idx[i]]
+            pred = predicted['video'][sel_idx[i]][:,0]
 
             # Stitch equally-spaced frames into a storyboard row
             times = np.linspace(0, len(true)-1, 8, dtype=int)
@@ -220,23 +218,62 @@ class VidTIMITTrainer(trainer.Trainer):
             labels = ['' for t in times]
 
             # Plot original video
-            plt.sca(axes[3*i])
+            plt.sca(axes[3*i, 0])
             plot_board(true_board, labels, "Original")
             # Plot observations
-            plt.sca(axes[3*i+1])
+            plt.sca(axes[3*i+1, 0])
             plot_board(obsv_board, labels, "Observed")
             # Plot reconstructed video
-            plt.sca(axes[3*i+2])
+            plt.sca(axes[3*i+2, 0])
             plot_board(pred_board, labels, "Reconstructed")
 
             # Display metric as title on top of original video
             axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
                                 fontdict={'fontsize': 10}, loc='right')
 
+        # Helper function to plot spectrogram on current axis
+        def plot_spectrogram(audio, y_label):
+            # Plot only the magnitude channels (ignore phase)
+            audio = audio[:,:audio.shape[1]/2]
+            # Undo overlapping of windows by picking central value
+            overlap = 2
+            spec = audio[:,overlap,:]
+            plt.cla()
+            plt.imshow(spec)
+            plt.ylabel(y_label)
+            plt.gca().tick_params(length=0)
+
+        # Plot audio spectograms in second column
+        for i in range(len(sel_idx)):
+            true = reference['audio'][sel_idx[i]]
+            obsv = observed['audio'][sel_idx[i]]
+            pred = predicted['audio'][sel_idx[i]][:,0]
+
+            # Set missing observations to white
+            obsv[np.isnan(obsv)] = 1.0
+
+            # Remove tick labels
+            labels = ['' for t in times]
+
+            # Plot original video
+            plt.sca(axes[3*i, 1])
+            plot_spectrogram(true, "Original")
+            # Plot observations
+            plt.sca(axes[3*i+1, 1])
+            plot_spectrogram(obsv, "Observed")
+            # Plot reconstructed video
+            plt.sca(axes[3*i+2, 1])
+            plot_spectrogram(pred, "Reconstructed")
+
+            # Display metric as title on top of spectrogram
+            axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
+                                fontdict={'fontsize': 10}, loc='right')
+
         # Remove axis borders
-        for i in range(len(axes)):
-            for spine in axes[i].spines.values():
-                spine.set_visible(False)
+        for i in range(axes.shape[0]):
+            for j in range(axes.shape[1])
+                for spine in axes[i].spines.values():
+                    spine.set_visible(False)
 
         plt.tight_layout()
         plt.draw()
