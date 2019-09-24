@@ -17,7 +17,7 @@ pip install -r requirements.txt
 Alternatively, one can install the following packages directly through `pip`:
 ```
 # For basic functionality
-pip install torch pandas pyyaml matplotlib
+pip install torch==1.1.0 pandas pyyaml matplotlib
 
 # To download and pre-process the Weizmann video dataset
 sudo apt-get install ffmpeg

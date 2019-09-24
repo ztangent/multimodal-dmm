@@ -161,9 +161,9 @@ def spec_to_wav(spec, rate):
     # Separate phase and magnitude, convert back to original range
     eps = 1e-7 # Small constant to add back
     max_mag = win_sz * 2 # Maximum magnitude is nperseg
-    mag = spec[:,:spec.shape[1]/2]
+    mag = spec[:,:spec.shape[1]//2]
     mag = np.exp(mag * (np.log(max_mag+eps)-np.log(eps)) + np.log(eps)) + eps
-    phase = spec[:,spec.shape[1]/2:]
+    phase = spec[:,spec.shape[1]//2:]
     phase = phase * (2 * np.pi) - np.pi
     # Convert back to complex-valued numpy array
     spec = mag*np.cos(phase) + mag*np.sin(phase)*1j

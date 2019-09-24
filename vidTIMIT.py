@@ -33,12 +33,12 @@ class VidTIMITTrainer(trainer.Trainer):
 
     # Set parameter defaults for VidTIMIT dataset
     defaults = {
-        'modalities' : ['video', 'person', 'action'],
+        'modalities' : ['video', 'audio'],
         'batch_size' : 25, 'split' : 25, 'bylen' : True,
         'epochs' : 500, 'lr' : 5e-4,
         'rec_mults' : {'video': 1, 'audio': 1},
-        'kld_anneal' : 250, 'burst_frac' : 0.2,
-        'drop_frac' : 0.5, 'start_frac' : 0, 'stop_frac' : 1,
+        'kld_anneal' : 250, 'burst_frac' : 0.1,
+        'drop_frac' : 0.0, 'start_frac' : 0, 'stop_frac' : 1,
         'eval_metric' : 'rec_loss', 'viz_metric' : 'ssim',
         'eval_freq' : 10, 'save_freq' : 10,
         'data_dir' : './datasets/vidTIMIT',
@@ -90,7 +90,6 @@ class VidTIMITTrainer(trainer.Trainer):
         all_data = vidTIMIT.VidTIMITDataset(data_dir, item_as_dict=True)
         # Split into train and test set
         train_data = all_data.select([None, ['sa1', 'sa2']], invert=True)
-        # Test on left out person
         test_data = all_data.select([None, ['sa1', 'sa2']])
         print("Done.")
         if len(args.normalize) > 0:
@@ -228,18 +227,18 @@ class VidTIMITTrainer(trainer.Trainer):
             plot_board(pred_board, labels, "Reconstructed")
 
             # Display metric as title on top of original video
-            axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
-                                fontdict={'fontsize': 10}, loc='right')
+            axes[3*i, 0].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
+                                   fontdict={'fontsize': 10}, loc='right')
 
         # Helper function to plot spectrogram on current axis
         def plot_spectrogram(audio, y_label):
             # Plot only the magnitude channels (ignore phase)
-            audio = audio[:,:audio.shape[1]/2]
+            audio = audio[:,:audio.shape[1]//2]
             # Undo overlapping of windows by picking central value
             overlap = 2
-            spec = audio[:,overlap,:]
+            spec = audio[:,overlap,:].T
             plt.cla()
-            plt.imshow(spec)
+            plt.imshow(spec, aspect='auto')
             plt.ylabel(y_label)
             plt.gca().tick_params(length=0)
 
@@ -266,20 +265,22 @@ class VidTIMITTrainer(trainer.Trainer):
             plot_spectrogram(pred, "Reconstructed")
 
             # Display metric as title on top of spectrogram
-            axes[3*i].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
-                                fontdict={'fontsize': 10}, loc='right')
+            axes[3*i, 1].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
+                                   fontdict={'fontsize': 10}, loc='right')
 
         # Remove axis borders
         for i in range(axes.shape[0]):
-            for j in range(axes.shape[1])
-                for spine in axes[i].spines.values():
+            for j in range(axes.shape[1]):
+                for spine in axes[i,j].spines.values():
                     spine.set_visible(False)
 
         plt.tight_layout()
         plt.draw()
         if args.eval_set is not None:
             fig_path = os.path.join(args.save_dir, args.eval_set + '.pdf')
-            plt.savefig(fig_path)
+        else:
+            fig_path = os.path.join(args.save_dir, 'visualize.pdf')
+        plt.savefig(fig_path)
         plt.pause(1.0 if args.test else 0.001)
 
     def save_results(self, results, args):

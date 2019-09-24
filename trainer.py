@@ -235,7 +235,7 @@ class Trainer(object):
             if args.gradients:
                 plot_grad_flow(model.named_parameters())
             # Gradient clipping
-            if args.clip_grad > 0:
+            if args.clip_grad is not None and args.clip_grad > 0:
                 clip_grad_norm_(model.parameters(), args.clip_grad)
             # Step, then zero gradients
             optimizer.step()
@@ -349,7 +349,7 @@ class Trainer(object):
                     "rnn_skip" : 'skip' in args.method,
                     "rnn_dir" : 'bwd' if args.method[0] == 'b' else 'fwd'
                 }
-        else if args.method is not None:
+        elif args.method is not None:
             print("Ignoring unknown inference method '{}'".format(args.method))
         return args
 
