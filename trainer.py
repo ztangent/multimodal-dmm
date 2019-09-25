@@ -75,6 +75,12 @@ class Trainer(object):
     parser.add_argument('--kld_anneal', type=int, default=100, metavar='N',
                         help='epochs to increase kld_mult over')
 
+    # Data loader arguments
+    parser.add_argument('--data_workers', type=int, default=1, metavar='N',
+                        help='number of data loader worker threads')
+    parser.add_argument('--pin_memory', type=bool, default=True, metavar='B',
+                        help='whether to pin memory for CUDA transfer')
+
     # Data normalization and corruption (i.e. random deletion)
     parser.add_argument('--normalize', type=str, default=[],
                         nargs='+', metavar='M',
@@ -389,7 +395,8 @@ class Trainer(object):
         print("--Training--")
         eval_loader = DataLoader(self.train_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=args.pin_memory,
+                                 num_workers=args.data_workers)
         with torch.no_grad():
             args.eval_set = 'train'
             results, train_metrics  = self.evaluate(eval_loader, args)
@@ -398,7 +405,8 @@ class Trainer(object):
         print("--Testing--")
         eval_loader = DataLoader(self.test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=args.pin_memory,
+                                 num_workers=args.data_workers)
         with torch.no_grad():
             args.eval_set = 'test'
             results, test_metrics  = self.evaluate(eval_loader, args)
@@ -413,7 +421,8 @@ class Trainer(object):
         model = self.model
         test_loader = DataLoader(self.test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=args.pin_memory,
+                                 num_workers=args.data_workers)
         best_loss, best_epoch = float('inf'), -1
         args.eval_set = None
 
@@ -480,10 +489,12 @@ class Trainer(object):
         # Batch data using data loaders
         train_loader = DataLoader(train_data, batch_size=args.batch_size,
                                   collate_fn=mseq.seq_collate_dict,
-                                  shuffle=True, pin_memory=True)
+                                  shuffle=True, pin_memory=args.pin_memory,
+                                  num_workers=args.data_workers)
         test_loader = DataLoader(test_data, batch_size=args.batch_size,
                                  collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=True)
+                                 shuffle=False, pin_memory=args.pin_memory,
+                                 num_workers=args.data_workers)
 
         # Train and save best model
         best_loss = float('inf')
