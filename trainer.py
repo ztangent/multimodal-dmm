@@ -51,6 +51,8 @@ class Trainer(object):
     # Batch, epoch and gradient arguments
     parser.add_argument('--batch_size', type=int, default=100, metavar='N',
                         help='input batch size for training')
+    parser.add_argument('--batch_sz_eval', type=int, default=None, metavar='N',
+                        help='(optional) separate batch size for evaluation')
     parser.add_argument('--split', type=int, default=1, metavar='N',
                         help='split each training sequence into N chunks')
     parser.add_argument('--bylen', action='store_true', default=False,
@@ -341,6 +343,9 @@ class Trainer(object):
 
     def pre_build_args(self, args):
         """Process args before model is constructed."""
+        # Set batch_sz_eval to batch_size if unspecified
+        if args.batch_sz_eval is None:
+            args.batch_sz_eval = args.batch_size
         # Override model and model_args based on method flag
         if args.method in ['bfvi', 'b-mask', 'f-mask', 'b-skip', 'f-skip']:
             print("Setting up '{}' inference method...".format(args.method))
@@ -393,7 +398,7 @@ class Trainer(object):
     def run_eval(self, args):
         """Evaluate on both training and test set."""
         print("--Training--")
-        eval_loader = DataLoader(self.train_data, batch_size=args.batch_size,
+        eval_loader = DataLoader(self.train_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
@@ -403,7 +408,7 @@ class Trainer(object):
             self.save_results(results, args)
 
         print("--Testing--")
-        eval_loader = DataLoader(self.test_data, batch_size=args.batch_size,
+        eval_loader = DataLoader(self.test_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
@@ -419,7 +424,7 @@ class Trainer(object):
     def run_find(self, args):
         """Finds best trained model in save directory."""
         model = self.model
-        test_loader = DataLoader(self.test_data, batch_size=args.batch_size,
+        test_loader = DataLoader(self.test_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
@@ -491,7 +496,7 @@ class Trainer(object):
                                   collate_fn=mseq.seq_collate_dict,
                                   shuffle=True, pin_memory=args.pin_memory,
                                   num_workers=args.data_workers)
-        test_loader = DataLoader(test_data, batch_size=args.batch_size,
+        test_loader = DataLoader(test_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
