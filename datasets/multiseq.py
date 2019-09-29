@@ -320,7 +320,7 @@ class MultiseqDataset(Dataset):
 def len_to_mask(lengths, time_first=True):
     """Converts list of sequence lengths to a mask tensor."""
     mask = torch.arange(max(lengths)).expand(len(lengths), max(lengths))
-    mask = mask < torch.tensor(lengths).unsqueeze(1)
+    mask = mask.long() < torch.tensor(lengths, dtype=torch.long).unsqueeze(1)
     if time_first:
         mask = mask.transpose(0, 1)
     return mask.unsqueeze(-1)
