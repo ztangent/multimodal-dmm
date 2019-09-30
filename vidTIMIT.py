@@ -325,7 +325,7 @@ class VidTIMITTrainer(trainer.Trainer):
             # Convert spectograms back to raw audio signal
             r_wav = vidTIMIT.spec_to_wav(reference['audio'][i], audio_rate)
             o_wav = vidTIMIT.spec_to_wav(observed['audio'][i], audio_rate)
-            p_wav = vidTIMIT.spec_to_wav(predicted['audio'][i], audio_rate)
+            p_wav = vidTIMIT.spec_to_wav(predicted['audio'][i][:,0], audio_rate)
 
             if save_args['comparison']:
                 # Join reference, observed and predicted audio for comparison
