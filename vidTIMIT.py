@@ -11,7 +11,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import cv2 as cv
-import scipy.io
+import scipy.io.wavfile
 import matplotlib
 import matplotlib.pyplot as plt
 
