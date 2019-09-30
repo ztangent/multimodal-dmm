@@ -404,28 +404,28 @@ class Trainer(object):
 
     def run_eval(self, args):
         """Evaluate on training and test set."""
-        print("--Training--")
-        eval_loader = DataLoader(self.train_data, batch_size=args.batch_sz_eval,
-                                 collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=args.pin_memory,
-                                 num_workers=args.data_workers)
         if 'train' in args.eval_sets:
+            print("--Training--")
+            loader = DataLoader(self.train_data, batch_size=args.batch_sz_eval,
+                                collate_fn=mseq.seq_collate_dict,
+                                shuffle=False, pin_memory=args.pin_memory,
+                                num_workers=args.data_workers)
             with torch.no_grad():
                 args.eval_set = 'train'
-                results, train_metrics  = self.evaluate(eval_loader, args)
+                results, train_metrics  = self.evaluate(loader, args)
                 self.save_results(results, args)
         else:
             train_metrics = None
 
-        print("--Testing--")
-        eval_loader = DataLoader(self.test_data, batch_size=args.batch_sz_eval,
-                                 collate_fn=mseq.seq_collate_dict,
-                                 shuffle=False, pin_memory=args.pin_memory,
-                                 num_workers=args.data_workers)
         if 'test' in args.eval_sets:
+            print("--Testing--")
+            loader = DataLoader(self.test_data, batch_size=args.batch_sz_eval,
+                                collate_fn=mseq.seq_collate_dict,
+                                shuffle=False, pin_memory=args.pin_memory,
+                                num_workers=args.data_workers)
             with torch.no_grad():
                 args.eval_set = 'test'
-                results, test_metrics  = self.evaluate(eval_loader, args)
+                results, test_metrics = self.evaluate(loader, args)
                 self.save_results(results, args)
         else:
             test_metrics = None

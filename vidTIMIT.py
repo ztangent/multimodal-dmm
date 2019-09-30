@@ -360,7 +360,7 @@ class VidTIMITTrainer(trainer.Trainer):
 
             if save_args['one_file']:
                 # Append audio data
-                wav_all.append(wav, axis=0)
+                wav_all = np.append(wav_all, wav, axis=0)
             else:
                 # Write video to file
                 vwriter.release()
