@@ -283,7 +283,7 @@ class VidTIMITTrainer(trainer.Trainer):
         else:
             fig_path = os.path.join(args.save_dir, 'visualize.pdf')
         plt.savefig(fig_path)
-        plt.pause(1.0 if args.test else 0.001)
+        plt.pause(1.0 if args.evaluate else 0.001)
 
     def save_results(self, results, args):
         """Save results to video."""

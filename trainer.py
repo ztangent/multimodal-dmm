@@ -145,8 +145,10 @@ class Trainer(object):
                         help='device to use')
     parser.add_argument('--anomaly_check', action='store_true', default=False,
                         help='check for gradient anomalies')
-    parser.add_argument('--test', action='store_true', default=False,
-                        help='evaluate without training')
+    parser.add_argument('--evaluate', '--test', action='store_true',
+                        default=False, help='evaluate without training')
+    parser.add_argument('--eval_sets', type=str, nargs='+', metavar='S',
+                        default=['train', 'test'], help='sets to evaluate on')
     parser.add_argument('--find_best', action='store_true', default=False,
                         help='find best model in save directory')
 
@@ -175,7 +177,7 @@ class Trainer(object):
         checkpoint = None
         if args.load is not None:
             checkpoint = self.load_checkpoint(args.load, args.device)
-        elif args.test:
+        elif args.evaluate:
             # Load best model in output directory if unspecified
             model_path = os.path.join(args.save_dir, "best.pth")
             checkpoint = self.load_checkpoint(model_path, args.device)
@@ -401,26 +403,32 @@ class Trainer(object):
         return checkpoint
 
     def run_eval(self, args):
-        """Evaluate on both training and test set."""
+        """Evaluate on training and test set."""
         print("--Training--")
         eval_loader = DataLoader(self.train_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
-        with torch.no_grad():
-            args.eval_set = 'train'
-            results, train_metrics  = self.evaluate(eval_loader, args)
-            self.save_results(results, args)
+        if 'train' in args.eval_sets:
+            with torch.no_grad():
+                args.eval_set = 'train'
+                results, train_metrics  = self.evaluate(eval_loader, args)
+                self.save_results(results, args)
+        else:
+            train_metrics = None
 
         print("--Testing--")
         eval_loader = DataLoader(self.test_data, batch_size=args.batch_sz_eval,
                                  collate_fn=mseq.seq_collate_dict,
                                  shuffle=False, pin_memory=args.pin_memory,
                                  num_workers=args.data_workers)
-        with torch.no_grad():
-            args.eval_set = 'test'
-            results, test_metrics  = self.evaluate(eval_loader, args)
-            self.save_results(results, args)
+        if 'test' in args.eval_sets:
+            with torch.no_grad():
+                args.eval_set = 'test'
+                results, test_metrics  = self.evaluate(eval_loader, args)
+                self.save_results(results, args)
+        else:
+            test_metrics = None
 
         # Save command line flags, model params
         self.save_params(args)
@@ -547,7 +555,7 @@ class Trainer(object):
 
     def run(self, args):
         # Evaluate model if test flag is set
-        if args.test:
+        if args.evaluate:
             self.run_eval(args)
             return
 

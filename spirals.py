@@ -25,7 +25,7 @@ class SpiralsTrainer(trainer.Trainer):
                         help='training data subdirectory')
     parser.add_argument('--test_subdir', type=str,
                         default='test', metavar='DIR',
-                        help='testing data subdirectory')    
+                        help='testing data subdirectory')
 
     # Set parameter defaults for spirals dataset
     defaults = {
@@ -40,7 +40,7 @@ class SpiralsTrainer(trainer.Trainer):
         'save_dir' : './spirals_save'
     }
     parser.set_defaults(**defaults)
-    
+
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
         dims = {'spiral-x': 1, 'spiral-y': 1}
@@ -60,7 +60,7 @@ class SpiralsTrainer(trainer.Trainer):
             # Do not add unimodal ELBO training loss for RNN methods
             args.train_args['uni_loss'] = False
         return args
-    
+
     def post_build_args(self, args):
         """Process args after model is constructed."""
         # Default reconstruction loss multipliers
@@ -89,10 +89,10 @@ class SpiralsTrainer(trainer.Trainer):
             # Normalize training data in-place
             train_data.normalize_(modalities=args.normalize)
         return train_data, test_data
-    
+
     def compute_metrics(self, model, infer, prior, recon,
                         targets, mask, lengths, order, args):
-        """Compute evaluation metrics from batch of inputs and outputs."""    
+        """Compute evaluation metrics from batch of inputs and outputs."""
         metrics = dict()
         if type(lengths) != torch.Tensor:
             lengths = torch.FloatTensor(lengths).to(args.device)
@@ -107,7 +107,7 @@ class SpiralsTrainer(trainer.Trainer):
         def time_avg(val):
             val[1 - mask.squeeze(-1)] = 0.0
             return val.sum(dim = 0) / lengths
-        metrics['mse'] = time_avg(mse)[order].tolist()    
+        metrics['mse'] = time_avg(mse)[order].tolist()
         return metrics
 
     def summarize_metrics(self, metrics, n_timesteps):
@@ -174,7 +174,7 @@ class SpiralsTrainer(trainer.Trainer):
         if args.eval_set is not None:
             fig_path = os.path.join(args.save_dir, args.eval_set + '.pdf')
             plt.savefig(fig_path)
-        plt.pause(1.0 if args.test else 0.001)
+        plt.pause(1.0 if args.evaluate else 0.001)
 
     def plot_spiral(self, axis, true, data, obsv, pred, rng):
         """Plots a single spiral on provided axis."""
@@ -204,7 +204,7 @@ class SpiralsTrainer(trainer.Trainer):
 
     def save_results(self, results, args):
         pass
-        
+
 if __name__ == "__main__":
     args = SpiralsTrainer.parser.parse_args()
     trainer = SpiralsTrainer(args)

@@ -372,7 +372,7 @@ def seq_collate(data, time_first=True):
 def seq_collate_dict(data, time_first=True):
     """Collate that accepts and returns dictionaries of batch tensors."""
     batch = {}
-    modalities = [k for k in data[0] if k not in ['length', 'seq_id']]
+    modalities = [k for k in data[0] if k not in ['length', 'id']]
     order = sorted(range(len(data)),
                    key=lambda i: data[i]['length'], reverse=True)
     data.sort(key=lambda d: d['length'], reverse=True)
