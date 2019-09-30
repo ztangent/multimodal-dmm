@@ -220,7 +220,7 @@ class Trainer(object):
         data_num, loss = 0, 0.0
         rec_mults = dict(args.rec_mults)
         # Iterate over batches
-        for b_num, (targets, mask, lengths, _) in enumerate(loader):
+        for b_num, (targets, mask, lengths, _, _) in enumerate(loader):
             # Anneal KLD loss multipliers
             b_tot = b_num + epoch*len(loader)
             kld_mult =\
@@ -266,14 +266,14 @@ class Trainer(object):
         # Set up accumulators
         n_timesteps = 0
         metrics = None
-        results = {'targets': [], 'inputs': [], 'recon': []}
+        results = {'seq_ids': [], 'targets': [], 'inputs': [], 'recon': []}
         # Only compute reconstruction loss for specified modalities
         rec_mults = dict(args.rec_mults)
         if args.eval_mods != 'all':
             for m in rec_mults:
                 rec_mults[m] *= float(m in args.eval_mods)
         # Iterate over batches
-        for b_num, (targets, mask, lengths, order) in enumerate(loader):
+        for b_num, (targets, mask, lengths, order, ids) in enumerate(loader):
             # Send to device
             mask = mask.to(args.device)
             for m in targets.keys():
@@ -301,6 +301,7 @@ class Trainer(object):
             metrics = (b_metrics if metrics is None else
                        {k: metrics[k] + b_metrics[k] for k in metrics})
             # Decollate and store observations and predictions
+            results['seq_ids'].append([ids[i] for i in order])
             results['targets'].\
                 append(mseq.seq_decoll_dict(targets, lengths, order))
             results['inputs'].\
@@ -335,10 +336,12 @@ class Trainer(object):
 
     def build_model(self, constructor, args):
         raise NotImplementedError
+        model = None
         return model
 
     def load_data(self, modalities, args):
         raise NotImplementedError
+        train_data, test_data = None, None
         return train_data, test_data
 
     def pre_build_args(self, args):
@@ -372,11 +375,13 @@ class Trainer(object):
                         targets, mask, lengths, order, args):
         """Compute evaluation metrics from batch of inputs and outputs."""
         raise NotImplementedError
+        metrics = None
         return metrics
 
     def summarize_metrics(self, metrics, n_timesteps):
         """Summarize and print metrics across dataset."""
         raise NotImplementedError
+        summary = None
         return summary
 
     def visualize(self, results, metric, args):

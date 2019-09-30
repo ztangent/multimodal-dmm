@@ -158,6 +158,7 @@ class MultiseqDataset(Dataset):
         if self.item_as_dict:
             d = {m: self.data[m][i] for m in self.modalities}
             d['length'] = self.lengths[i]
+            d['id'] = self.seq_ids[i]
             return d
         else:
             return tuple(self.data[m][i] for m in self.modalities)
@@ -371,17 +372,18 @@ def seq_collate(data, time_first=True):
 def seq_collate_dict(data, time_first=True):
     """Collate that accepts and returns dictionaries of batch tensors."""
     batch = {}
-    modalities = [k for k in data[0] if  k != 'length']
+    modalities = [k for k in data[0] if k not in ['length', 'seq_id']]
     order = sorted(range(len(data)),
                    key=lambda i: data[i]['length'], reverse=True)
     data.sort(key=lambda d: d['length'], reverse=True)
     lengths = [d['length'] for d in data]
+    seq_ids = [d['id'] for d in data]
     for m in modalities:
         m_data = [d[m] for d in data]
         m_padded = pad_and_merge(m_data, max(lengths))
         batch[m] = m_padded if time_first else m_padded.transpose(0, 1)
     mask = len_to_mask(lengths, time_first)
-    return batch, mask, lengths, order
+    return batch, mask, lengths, order, seq_ids
 
 def seq_decoll(batch, lengths, order, time_first=True):
     """Decollate batched data by de-padding and reordering."""
