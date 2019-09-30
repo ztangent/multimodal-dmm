@@ -11,6 +11,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 import cv2 as cv
+import scipy.io
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -238,7 +239,8 @@ class VidTIMITTrainer(trainer.Trainer):
             overlap = 2
             spec = audio[:,overlap,:].T
             plt.cla()
-            plt.imshow(spec, aspect='auto')
+            plt.imshow(spec, aspect='auto', cmap='gray')
+            plt.yticks([0, spec.shape[0]//2, spec.shape[0]-1])
             plt.ylabel(y_label)
             plt.gca().tick_params(length=0)
 
@@ -285,7 +287,91 @@ class VidTIMITTrainer(trainer.Trainer):
 
     def save_results(self, results, args):
         """Save results to video."""
-        pass
+        print("Saving results...")
+        seq_ids = results['seq_ids']
+        reference = results['targets']
+        observed = results['inputs']
+        predicted = results['recon']
+
+        # Default save args
+        save_args = {'one_file': True,
+                     'filename': args.eval_set,
+                     'comparison': True}
+        save_args.update(args.save_args)
+
+        # Define frame rate and video dimensions
+        shape = reference['video'][0].shape[2:4]
+        if save_args['comparison']:
+            shape = (shape[0]*3, shape[1])
+        fps = vidTIMIT.fps
+        audio_rate = vidTIMIT.audio_rate
+
+        # Create video writer for single output file
+        if save_args['one_file']:
+            path = os.path.join(args.save_dir, save_args['filename'])
+            vwriter = cv.VideoWriter(path + '.avi', 0, fps, shape)
+            wav_all = np.empty((0,), float)
+
+        # Helper functions
+        def preprocess(frame):
+            return cv.cvtColor((frame * 255).astype('uint8'),
+                               cv.COLOR_RGB2BGR)
+        def add_label(image, text, pos):
+            cv.putText(image, text, pos, cv.FONT_HERSHEY_SIMPLEX,
+                       0.4, (255, 255, 255), 1, cv.LINE_AA)
+
+        # Iterate over sequences
+        for i, seq_id in enumerate(seq_ids):
+            # Convert spectograms back to raw audio signal
+            r_wav = vidTIMIT.spec_to_wav(reference['audio'][i], audio_rate)
+            o_wav = vidTIMIT.spec_to_wav(observed['audio'][i], audio_rate)
+            p_wav = vidTIMIT.spec_to_wav(predicted['audio'][i], audio_rate)
+
+            if save_args['comparison']:
+                # Join reference, observed and predicted audio for comparison
+                wav = np.concatenate([r_wav, o_wav, p_wav], axis=0)
+            else:
+                # Otherwise just save predicted audio
+                wav = p_wav
+
+            # Transpose videos to T * H * W * C
+            r_vid = reference['video'][i].transpose((0,2,3,1))
+            o_vid = observed['video'][i].transpose((0,2,3,1))
+            p_vid = predicted['video'][i][:,0].transpose((0,2,3,1))
+
+            if not save_args['one_file']:
+                # Construct file names from sequence IDs
+                path = '{}_{}'.format(seq_id[0], seq_id[1])
+                path = os.path.join(args.save_dir, path)
+                # Create video writer for file
+                vwriter = cv.VideoWriter(path+'.avi', 0, fps, shape)
+
+            # Iterate over frames
+            for t in range(len(p_vid)):
+                frame = preprocess(p_vid[t])
+                if not save_args['comparison']:
+                    vwriter.write(frame)
+                    continue
+                # Combine frames for side-by-side comparison
+                p_frame = frame
+                r_frame, o_frame = preprocess(r_vid[t]), preprocess(o_vid[t])
+                frame = np.hstack([r_frame, o_frame, p_frame])
+                vwriter.write(frame)
+
+            if save_args['one_file']:
+                # Append audio data
+                wav_all.append(wav, axis=0)
+            else:
+                # Write video to file
+                vwriter.release()
+                # Write audio to file
+                scipy.io.wavfile.write(path+'.wav', audio_rate, wav)
+
+        if save_args['one_file']:
+            # Write out videos in single file
+            vwriter.release()
+            # Write out audio in single file
+            scipy.io.wavfile.write(path+'.wav', audio_rate, wav_all)
 
 if __name__ == "__main__":
     args = VidTIMITTrainer.parser.parse_args()

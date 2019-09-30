@@ -13,6 +13,7 @@ else:
     from .multiseq import MultiseqDataset, seq_collate
 
 fps = 25.0
+audio_rate = 32000
 subjects = [
     'fadg0', 'faks0', 'fcft0', 'fcmh0', 'fcmr0', 'fcrh0', 'fdac1', 'fdms0',
     'fdrd1', 'fedw0', 'felc0', 'fgjd0', 'fjas0', 'fjem0', 'fjre0', 'fjwb0',
