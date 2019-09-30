@@ -303,7 +303,7 @@ class Trainer(object):
             metrics = (b_metrics if metrics is None else
                        {k: metrics[k] + b_metrics[k] for k in metrics})
             # Decollate and store observations and predictions
-            results['seq_ids'].append([ids[i] for i in order])
+            results['seq_ids'] += [ids[i] for i in order]
             results['targets'].\
                 append(mseq.seq_decoll_dict(targets, lengths, order))
             results['inputs'].\
@@ -311,7 +311,7 @@ class Trainer(object):
             results['recon'].\
                 append(mseq.seq_decoll_dict(recon, lengths, order))
         # Concatenate results across batches
-        for k in results:
+        for k in ['targets', 'inputs', 'recon']:
             modalities = results[k][0].keys()
             results[k] = {m: [seq for batch in results[k] for seq in batch[m]]
                           for m in modalities}
