@@ -12,8 +12,8 @@ if __name__ == '__main__':
 else:
     from .multiseq import MultiseqDataset, seq_collate
 
-fps = 25.0
-audio_rate = 32000
+video_fps = 25.0
+audio_fps = 32000
 subjects = [
     'fadg0', 'faks0', 'fcft0', 'fcmh0', 'fcmr0', 'fcrh0', 'fdac1', 'fdms0',
     'fdrd1', 'fedw0', 'felc0', 'fgjd0', 'fjas0', 'fjem0', 'fjre0', 'fjwb0',
@@ -38,8 +38,8 @@ class VidTIMITDataset(MultiseqDataset):
 
         super(VidTIMITDataset, self).__init__(
             modalities=['audio', 'video'], dirs=[audio_dir, video_dir],
-            regex="(\w+)_(\w+)\.npy", preprocess=None,
-            rates=fps, base_rate=base_rate, truncate=True,
+            regex="(\w+)_(\w+)_(\w+)\.npy", preprocess=None,
+            rates=video_fps, base_rate=base_rate, truncate=True,
             ids_as_mods=[], item_as_dict=item_as_dict)
 
 def download_vidTIMIT(dest='./vidTIMIT'):
@@ -61,22 +61,26 @@ def download_vidTIMIT(dest='./vidTIMIT'):
     aud_dir = os.path.join(dest, 'audio')
     if not os.path.exists(aud_dir):
         os.mkdir(aud_dir)
+    subj_dir = os.path.join(dest, 'subjects')
+    if not os.path.exists(subj_dir):
+        os.mkdir(subj_dir)
 
     for subj in subjects:
-        subj_path = os.path.join(dest, subj)
+        subj_path = os.path.join(subj_dir, subj)
 
         # Download and extract videos
         zip_path = subj_path + '.zip'
         if not os.path.exists(zip_path):
-            utils.download(subj + '.zip', source=src_url, dest=dest)
+            utils.download(subj + '.zip', source=src_url, dest=subj_dir)
         if not os.path.exists(subj_path):
             with zipfile.ZipFile(zip_path, "r") as f:
                 print("Extracting subject '{}'".format(subj))
-                f.extractall(dest)
+                f.extractall(subj_dir)
 
         # Convert videos to NPY
         subj_vid_dir = os.path.join(subj_path, 'video')
-        for vid_name in os.listdir(subj_vid_dir):
+        vid_idx = 0
+        for vid_name in sorted(os.listdir(subj_vid_dir)):
             # Skip non-video items
             vid_path = os.path.join(subj_vid_dir, vid_name)
             if not os.path.isdir(vid_path):
@@ -88,23 +92,28 @@ def download_vidTIMIT(dest='./vidTIMIT'):
             vid_data = img_dir_to_npy(vid_path)
             vid_data = preprocess_video(vid_data)
             # Save in main video directory
-            npy_path = os.path.join(vid_dir, subj + '_' + vid_name + '.npy')
+            npy_path = '{}_{}_{}.npy'.format(subj, vid_idx, vid_name)
+            npy_path = os.path.join(vid_dir, npy_path)
             np.save(npy_path, vid_data)
+            vid_idx += 1
 
         # Convert audio waveforms to spectrogram NPY files
         subj_aud_dir = os.path.join(subj_path, 'audio')
-        for aud_name in os.listdir(subj_aud_dir):
+        aud_idx = 0
+        for aud_name in sorted(os.listdir(subj_aud_dir)):
             # Skip non-WAV files
             if aud_name[-4:] != '.wav':
                 continue
             aud_path = os.path.join(subj_aud_dir, aud_name)
             print("Converting {} to NPY...".format(aud_path))
             rate, aud_data = scipy.io.wavfile.read(aud_path)
-            aud_data = wav_to_spec(aud_data, rate)
+            aud_data = preprocess_audio(aud_data, rate)
             aud_name = aud_name[:-4]
             # Save in main audio directory
-            npy_path = os.path.join(aud_dir, subj + '_' + aud_name + '.npy')
+            npy_path = '{}_{}_{}.npy'.format(subj, aud_idx, aud_name)
+            npy_path = os.path.join(aud_dir, npy_path)
             np.save(npy_path, aud_data)
+            aud_idx += 1
 
 def img_dir_to_npy(path):
     import PIL.Image
@@ -129,11 +138,22 @@ def preprocess_video(video):
     video = np.transpose(video, (0,3,1,2))
     return video
 
+def preprocess_audio(wav, rate):
+    """Preprocess audio into frames of 1280 samples."""
+    # Reshape into frames of 1280 samples
+    smps_per_frame = int(rate / video_fps)
+    padded_len = (wav.shape[0]//smps_per_frame+1) * smps_per_frame
+    wav = np.pad(wav, (0, padded_len-wav.shape[0]), 'edge')
+    wav = wav.reshape((-1, smps_per_frame))
+    # Normalize so that std dev ~= 1
+    wav = wav / 1024.0
+    return wav
+
 def wav_to_spec(wav, rate):
     """Convert to spectrogram using 25 windows per second."""
     import scipy.signal
     # Use window size of 2 * 32000 / 25 = 2560
-    win_sz = rate / fps * 2
+    win_sz = rate / video_fps * 2
     # Perform Short Time Fourier Transform (STFT)
     f, t, spec = scipy.signal.stft(wav, rate, nperseg=win_sz, noverlap=win_sz/2)
     # Swap time and frequency axes
@@ -158,7 +178,7 @@ def wav_to_spec(wav, rate):
 def spec_to_wav(spec, rate):
     """Convert stacked spectrogram produced by wav_to_spec back to wav."""
     import scipy.signal
-    win_sz = rate / fps * 2
+    win_sz = rate / video_fps * 2
     # Separate phase and magnitude, convert back to original range
     eps = 1e-7 # Small constant to add back
     max_mag = win_sz * 2 # Maximum magnitude is nperseg
