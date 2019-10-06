@@ -35,7 +35,8 @@ class VidTIMITTrainer(trainer.Trainer):
     # Set parameter defaults for VidTIMIT dataset
     defaults = {
         'modalities' : ['video', 'audio'],
-        'batch_size' : 25, 'split' : 25, 'bylen' : True,
+        'batch_size' : 25, 'batch_sz_eval' : 10,
+        'split' : 25, 'bylen' : True,
         'epochs' : 500, 'lr' : 5e-4,
         'rec_mults' : {'video': 1, 'audio': 1},
         'kld_anneal' : 250, 'burst_frac' : 0.1,
@@ -49,16 +50,14 @@ class VidTIMITTrainer(trainer.Trainer):
 
     def build_model(self, constructor, args):
         """Construct model using provided constructor."""
-        dims = {'video': (3, 64, 64), 'audio': (10, 1281)}
-        dists = {'video': 'Bernoulli', 'audio': 'Bernoulli'}
+        dims = {'video': (3, 64, 64), 'audio': (1280,)}
+        dists = {'video': 'Bernoulli', 'audio': 'Normal'}
         z_dim = args.model_args.get('z_dim', 256)
         h_dim = args.model_args.get('h_dim', 256)
         gauss_out = (args.model != 'MultiDKS')
-        encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out),
-                    'audio': models.common.AudioEncoder(z_dim, gauss_out)}
-        decoders = {'video': models.common.ImageDecoder(z_dim),
-                    'audio': models.common.AudioDecoder(z_dim)}
-        custom_mods = [m for m in ['video', 'audio'] if m in args.modalities]
+        encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out)}
+        decoders = {'video': models.common.ImageDecoder(z_dim)}
+        custom_mods = [m for m in ['video'] if m in args.modalities]
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],
                             dists=[dists[m] for m in args.modalities],
@@ -89,9 +88,9 @@ class VidTIMITTrainer(trainer.Trainer):
         print("Loading data...")
         data_dir = os.path.abspath(args.data_dir)
         all_data = vidTIMIT.VidTIMITDataset(data_dir, item_as_dict=True)
-        # Split into train and test set
-        train_data = all_data.select([None, ['sa1', 'sa2']], invert=True)
-        test_data = all_data.select([None, ['sa1', 'sa2']])
+        # Split into train and test set (test = last 2 videos per subject)
+        train_data = all_data.select([None, [str(i) for i in range(8)], None])
+        test_data = all_data.select([None, ['8', '9'], None])
         print("Done.")
         if len(args.normalize) > 0:
             print("Normalizing ", args.normalize, "...")
@@ -231,16 +230,19 @@ class VidTIMITTrainer(trainer.Trainer):
             axes[3*i, 0].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
                                    fontdict={'fontsize': 10}, loc='right')
 
-        # Helper function to plot spectrogram on current axis
-        def plot_spectrogram(audio, y_label):
-            # Plot only the magnitude channels (ignore phase)
-            audio = audio[:,:audio.shape[1]//2]
-            # Undo overlapping of windows by picking central value
-            overlap = 2
-            spec = audio[:,overlap,:].T
+        # Helper function to plot waveform on current axis
+        def plot_wav(audio, y_label):
+            # Reshape audio to 1D array and rescale
+            nan_idx = np.nonzero(np.isnan(audio.flatten()))[0]
+            audio[np.isnan(audio)] = 0
+            audio = vidTIMIT.postprocess_audio(audio)
+            plt_idx = [i for i in range(0, len(audio), 256)]
             plt.cla()
-            plt.imshow(spec, aspect='auto', cmap='gray')
-            plt.yticks([0, spec.shape[0]//2, spec.shape[0]-1])
+            plt.plot(plt_idx, audio[plt_idx], '-k')
+            if len(nan_idx) > 0:
+                nan_idx = [idx for idx in nan_idx if idx in plt_idx]
+                plt.plot(nan_idx, audio[nan_idx], 'w_', ms=3)
+            plt.ylim([-8192, 8192])
             plt.ylabel(y_label)
             plt.gca().tick_params(length=0)
 
@@ -250,23 +252,20 @@ class VidTIMITTrainer(trainer.Trainer):
             obsv = observed['audio'][sel_idx[i]]
             pred = predicted['audio'][sel_idx[i]][:,0]
 
-            # Set missing observations to white
-            obsv[np.isnan(obsv)] = 1.0
-
             # Remove tick labels
             labels = ['' for t in times]
 
             # Plot original video
             plt.sca(axes[3*i, 1])
-            plot_spectrogram(true, "Original")
+            plot_wav(true, "Original")
             # Plot observations
             plt.sca(axes[3*i+1, 1])
-            plot_spectrogram(obsv, "Observed")
+            plot_wav(obsv, "Observed")
             # Plot reconstructed video
             plt.sca(axes[3*i+2, 1])
-            plot_spectrogram(pred, "Reconstructed")
+            plot_wav(pred, "Reconstructed")
 
-            # Display metric as title on top of spectrogram
+            # Display metric as title on top
             axes[3*i, 1].set_title('Metric: {:0.3f}'.format(sel_metric[i]),
                                    fontdict={'fontsize': 10}, loc='right')
 
@@ -303,14 +302,14 @@ class VidTIMITTrainer(trainer.Trainer):
         shape = reference['video'][0].shape[2:4]
         if save_args['comparison']:
             shape = (shape[0]*3, shape[1])
-        fps = vidTIMIT.fps
-        audio_rate = vidTIMIT.audio_rate
+        video_fps = vidTIMIT.video_fps
+        audio_fps = vidTIMIT.audio_fps
 
         # Create video writer for single output file
         if save_args['one_file']:
             path = os.path.join(args.save_dir, save_args['filename'])
-            vwriter = cv.VideoWriter(path + '.avi', 0, fps, shape)
-            wav_all = np.empty((0,), float)
+            vwriter = cv.VideoWriter(path + '.avi', 0, video_fps, shape)
+            wav_all = np.empty((0,), np.int16)
 
         # Helper functions
         def preprocess(frame):
@@ -323,9 +322,9 @@ class VidTIMITTrainer(trainer.Trainer):
         # Iterate over sequences
         for i, seq_id in enumerate(seq_ids):
             # Convert spectograms back to raw audio signal
-            r_wav = vidTIMIT.spec_to_wav(reference['audio'][i], audio_rate)
-            o_wav = vidTIMIT.spec_to_wav(observed['audio'][i], audio_rate)
-            p_wav = vidTIMIT.spec_to_wav(predicted['audio'][i][:,0], audio_rate)
+            r_wav = vidTIMIT.postprocess_audio(reference['audio'][i])
+            o_wav = vidTIMIT.postprocess_audio(observed['audio'][i])
+            p_wav = vidTIMIT.postprocess_audio(predicted['audio'][i][:,0])
 
             if save_args['comparison']:
                 # Join reference, observed and predicted audio for comparison
@@ -341,10 +340,10 @@ class VidTIMITTrainer(trainer.Trainer):
 
             if not save_args['one_file']:
                 # Construct file names from sequence IDs
-                path = '{}_{}'.format(seq_id[0], seq_id[1])
+                path = '{}_{}_{}'.format(*seq_id)
                 path = os.path.join(args.save_dir, path)
                 # Create video writer for file
-                vwriter = cv.VideoWriter(path+'.avi', 0, fps, shape)
+                vwriter = cv.VideoWriter(path+'.avi', 0, video_fps, shape)
 
             # Iterate over frames
             for t in range(len(p_vid)):
@@ -365,13 +364,13 @@ class VidTIMITTrainer(trainer.Trainer):
                 # Write video to file
                 vwriter.release()
                 # Write audio to file
-                scipy.io.wavfile.write(path+'.wav', audio_rate, wav)
+                scipy.io.wavfile.write(path+'.wav', audio_fps, wav)
 
         if save_args['one_file']:
             # Write out videos in single file
             vwriter.release()
             # Write out audio in single file
-            scipy.io.wavfile.write(path+'.wav', audio_rate, wav_all)
+            scipy.io.wavfile.write(path+'.wav', audio_fps, wav_all)
 
 if __name__ == "__main__":
     args = VidTIMITTrainer.parser.parse_args()

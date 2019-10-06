@@ -149,6 +149,10 @@ def preprocess_audio(wav, rate):
     wav = wav / 1024.0
     return wav
 
+def postprocess_audio(wav):
+    """Post-process audio back to original format."""
+    return np.rint(wav.flatten() * 1024).astype(np.int16)
+
 def wav_to_spec(wav, rate):
     """Convert to spectrogram using 25 windows per second."""
     import scipy.signal
