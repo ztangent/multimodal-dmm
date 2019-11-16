@@ -39,7 +39,7 @@ class MultiDGTS(nn.Module):
         # Square std and add numerical constant for stability
         var = std.pow(2) + eps
         # Precision matrix of i-th Gaussian expert (T = 1/sigma^2)
-        T = 1. / var
+        T = 1. / var * std.sign()
         # Set missing data to zero so they are excluded from calculation
         if mask is None:
             mask = 1 - torch.isnan(var).any(dim=-1)
