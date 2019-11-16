@@ -132,19 +132,16 @@ def analyze(args):
     # Print run results for each method
     run_results = pd.DataFrame(run_results)
     run_results = run_results.groupby('method').mean()
-    run_results.set_index('method', inplace=True)
     print(run_results)
 
     # Print task results for each method
     task_results = pd.DataFrame(task_results)
     task_results = task_results.groupby('method').mean()
-    task_results.set_index('method', inplace=True)
     print(task_results)
 
     # Print task standard deviations for each method
     task_results_std = pd.DataFrame(task_results_std)
     task_results_std = task_results_std.groupby('method').mean()
-    task_results_std.set_index('method', inplace=True)
     print(task_results_std)
 
     # Save results to CSV file
