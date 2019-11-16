@@ -41,7 +41,7 @@ If automated download fails, create a directory called `weizmann` in `datasets`,
 
 The `models` subdirectory contains three different inference methods that can be used with MDMM (or MDMM-like) architectures:
 
-- `dmm.py` implements the MDMM with Bidirectional Factorized Variational Inference, a.k.a. Backward Forward Variational Inference (BFVI), as described in our paper. Refer to the included docstrings for a full list of options.
+- `dmm.py` implements the MDMM with Backward Forward Variational Inference (BFVI), as described in our paper. Refer to the included docstrings for a full list of options.
 
 - `dks.py` implements the MDMM with the RNN-based structured inference networks described by [Krishnan et al](https://www.aaai.org/ocs/index.php/AAAI/AAAI17/paper/view/14215). By providing different options to the constructor, one can use either forward or backward RNN networks, and toggle different methods for handling missing data. Refer to the docstrings for details.
 
@@ -93,7 +93,15 @@ For the Weizmann dataset:
 
 ## Examples
 
-Refer to the [paper](https://arxiv.org/abs/1905.13570) for example results.
+Below are spiral reconstructions produced by the inference methods across different inference tasks. BFVI (our method) consistently produces good reconstructions across all inference tasks, unlike the RNN-based methods.
+
+![Comparison of spiral reconstructions](/images/spirals_comparison.png)
+
+Video reconstructions from the Weizmann dataset are shown below, comparing BFVI to the next best method (B-Skip). Only video data is provided; the silhoutte masks and action labels have to be inferred. Again, it can be seen that BFVI produces better reconstructions, as well as better silhouette and action predictions.
+
+![Comparison of video reconstructions](/images/weizmann_comparison.png)
+
+Refer to the [paper](https://arxiv.org/abs/1905.13570) for more examples.
 
 ## Bugs & Questions
 
