@@ -55,8 +55,10 @@ class VidTIMITTrainer(trainer.Trainer):
         z_dim = args.model_args.get('z_dim', 256)
         h_dim = args.model_args.get('h_dim', 256)
         gauss_out = (args.model != 'MultiDKS')
-        encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out)}
-        decoders = {'video': models.common.ImageDecoder(z_dim)}
+        encoders = {'video': models.common.ImageEncoder(z_dim, gauss_out),
+                    'audio': models.common.AudioEncoder(z_dim, gauss_out)}
+        decoders = {'video': models.common.ImageDecoder(z_dim),
+                    'audio': models.common.AudioDecoder(z_dim)}
         custom_mods = [m for m in ['video'] if m in args.modalities]
         model = constructor(args.modalities,
                             dims=[dims[m] for m in args.modalities],

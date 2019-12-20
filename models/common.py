@@ -219,37 +219,25 @@ class AudioDeconv(nn.Module):
         return self.net(x)
 
 class AudioEncoder(nn.Module):
-    """Convolutional encoder for audio spectrogram slices."""
-    def __init__(self, z_dim, gauss_out=True,
-                 n_freqs=1281, n_frames=5, n_kernels=16, n_layers=3):
+    """GRU encoder for segments of raw audio samples."""
+    def __init__(self, z_dim, gauss_out=True, h_dim=256, subseg_len=256):
         super(AudioEncoder, self).__init__()
-        # Compute final feature size assuming n_freqs = k*2^n +1 for some n, k
-        self.feat_size = (n_freqs-1) // 2**n_layers +1
-        self.feat_dim = self.feat_size * n_kernels
-        # Channel number is twice the number of time frames (real + imag)
-        n_channels = n_frames * 2
-
-        self.conv_stack = nn.Sequential(
-            *([AudioConv(n_channels, n_kernels // 2**(n_layers-1))] +
-              [AudioConv(n_kernels//2**(n_layers-l),
-                         n_kernels//2**(n_layers-l-1))
-               for l in range(1, n_layers-1)] +
-              [AudioConv(n_kernels // 2, n_kernels, last=True)])
-        )
-
+        self.subseg_len = subseg_len
+        self.feat_dim = h_dim
+        self.gru = nn.GRU(subseg_len, h_dim, batch_first=True)
         self.gauss_out = gauss_out
         if gauss_out:
-            self.feat_to_z_mean = nn.Linear(self.feat_dim, z_dim)
+            self.feat_to_z_mean = nn.Linear(h_dim, z_dim)
             self.feat_to_z_std = nn.Sequential(
-                nn.Linear(self.feat_dim, z_dim),
+                nn.Linear(h_dim, z_dim),
                 nn.Softplus()
             )
 
-            nn.init.xavier_uniform_(self.feat_to_z_mean.weight)
-            nn.init.xavier_uniform_(self.feat_to_z_std[0].weight)
-
     def forward(self, x):
-        feats = self.conv_stack(x)
+        # Reshape to (batch_dim, ..., subseg_len)
+        x = x.view(x.shape[0], -1, self.subseg_len)
+        _, h_out = self.gru(x)
+        feats = h_out[-1]
         if not self.gauss_out:
             return feats
         z_mean = self.feat_to_z_mean(feats.view(-1, self.feat_dim))
@@ -257,34 +245,39 @@ class AudioEncoder(nn.Module):
         return z_mean, z_std
 
 class AudioDecoder(nn.Module):
-    """De-convolutional decoder for audio spectrogram slices."""
-    def __init__(self, z_dim,
-                 n_freqs=1281, n_frames=5, n_kernels=16, n_layers=3):
+    """GRU decoder for segments of raw audio samples."""
+    def __init__(self, z_dim, h_dim=256, subseg_len=256, n_subsegs=5):
         super(AudioDecoder, self).__init__()
-        # Compute final feature size assuming n_freqs = k*2^n +1 for some n, k
-        self.feat_size = (n_freqs-1) // 2**n_layers +1
-        self.feat_dim = self.feat_size * n_kernels
-        self.feat_shape = (n_kernels, self.feat_size)
-        # Channel number is twice the number of time frames (real + imag)
-        n_channels = n_frames * 2
-
-        self.z_to_feat = nn.Sequential(
-            nn.Linear(z_dim, self.feat_dim),
+        self.subseg_len = subseg_len
+        self.n_subsegs = n_subsegs
+        self.z_to_h0 = nn.Sequential(
+            nn.Linear(z_dim, h_dim),
             nn.ReLU()
         )
-
-        self.deconv_stack = nn.Sequential(
-            *([AudioDeconv(n_kernels // 2**l, n_kernels // 2**(l+1))
-               for l in range(n_layers-1)] +
-              [AudioDeconv(n_kernels // 2**(n_layers-1),
-                           n_channels, last=True)] +
-              [nn.Sigmoid()]
-            )
+        self.z_to_x0 = nn.Sequential(
+            nn.Linear(z_dim, subseg_len),
+            nn.ReLU()
         )
-
-        nn.init.xavier_uniform_(self.z_to_feat[0].weight)
+        self.gru = nn.GRU(subseg_len, h_dim, batch_first=True)
+        self.h_to_mean = nn.Linear(h_dim, subseg_len)
+        self.h_to_std = nn.Sequential(
+            nn.Linear(h_dim, subseg_len),
+            nn.Softplus())
 
     def forward(self, z):
-        feats = self.z_to_feat(z).view(-1, *self.feat_shape)
-        probs = self.deconv_stack(feats)
-        return (probs,)
+        # Reshape to (1, batch_dim, h_dim)
+        h = self.z_to_h0(z).unsqueeze(0)
+        # Reshape to (batch_dim, 1, subseg_len)
+        x_in = self.z_to_x0(z).unsqueeze(1)
+        x_outs, x_stds = []
+        # Auto-regressively generate the sequence of subsegments
+        for seg in range(self.n_subsegs):
+            _, h = self.gru(x_in, h)
+            x_out = self.h_to_mean(h[-1])
+            x_std = self.h_to_std(h[-1])
+            x_outs.append(x_out)
+            x_stds.append(x_in)
+            x_in = x_out
+        out_mean = torch.stack(x_outs, dim=-1)
+        out_std = torch.stack(x_stds, dim=-1)
+        return (out_mean, out_std)
